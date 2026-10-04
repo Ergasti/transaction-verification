@@ -65,11 +65,11 @@ php artisan vendor:publish --tag=transaction-verification-config
 
 **5. OCR.**
 - Tesseract and Poppler in the app's image: `apt-get install tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng poppler-utils`.
-- RapidOCR as a compose service, built from the package (a published image comes later):
+- RapidOCR as a compose service, from the image the package publishes with each release:
 
 ```yaml
 ocr_rapid:
-  build: ./vendor/ergasti/transaction-verification/ocr-sidecar
+  image: ghcr.io/ergasti/transaction-verification-ocr:0.1.0   # the same version as the package
   restart: always
   mem_limit: 2g
   cpus: 4
@@ -79,6 +79,12 @@ ocr_rapid:
 
 No port needs publishing; the app reaches it on the compose network. Down or slow, receipts go to a person, never
 approved.
+
+- **Keep the image version equal to the package version** (`composer show ergasti/transaction-verification`).
+- **The image is private:** each server logs in once with a token that can only read packages (`read:packages`):
+  `echo <token> | docker login ghcr.io -u <user> --password-stdin`.
+- **Fallback:** `build: ./vendor/ergasti/transaction-verification/ocr-sidecar` instead of `image:` (needs internet for
+  the build, ~1 GB).
 
 **6. Keep running:** the scheduler (it recovers rows whose queue job was lost, every 5 minutes) and a queue worker on
 `TRANSACTION_VERIFICATION_QUEUE`.
