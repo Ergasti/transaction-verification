@@ -1,0 +1,27 @@
+# The full closure, frozen from the image that read the 15 real receipts exactly (2026-09-29). Installed with
+# --no-deps, so a rebuild never resolves anything newer. opencv-python-headless replaces the opencv-python
+# rapidocr asks for (that one needs X11/GL libraries; the headless build read the fixtures identically).
+# openvino (2026-10-04) leaves out the openvino-telemetry it asks for: the reads don't need it, and nothing phones home.
+antlr4-python3-runtime==4.9.3
+certifi==2026.7.22
+charset-normalizer==3.5.1
+colorlog==6.12.0
+flatbuffers==25.12.19
+idna==3.20
+numpy==2.4.6
+omegaconf==2.3.1
+onnxruntime==1.30.0
+opencv-python-headless==5.0.0.93
+openvino==2026.4.1
+packaging==26.3
+pillow==12.3.0
+protobuf==7.36.2
+pyclipper==1.4.0
+python-bidi==0.6.11
+PyYAML==6.0.3
+rapidocr==3.9.2
+requests==2.34.2
+shapely==2.1.2
+six==1.17.0
+tqdm==4.70.1
+urllib3==2.8.0

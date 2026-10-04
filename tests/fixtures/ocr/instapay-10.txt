@@ -1,0 +1,109 @@
+Transaction Successful
+٠. a
+٠ @
+
+25 EGP
+
+Transfer Amount
+
+8 From
+UN
+
+test.sender@instapay
+‎TEST SENDER‏
+
+‎Vv
+
+‎(=) To
+
+‎| ** RRRRRE ‏ع‎ KEK KKK
+
+ت*** ت***
+
+‎1000000000000000010
+‎Reference 100000000010
+Date: 18 Mar 2026 02:10 PM
+Note Monthly Allowance
+
+‎POWERED BY
+
+‎onTransaction Successful
+
+@ a
+a
+« ©
+
+25 EGP
+
+Transfer Amount
+
+(=) From
+itl
+
+test.sender@instapay
+‎TEST SENDER‏
+
+‎Vv
+ت*** ت***
+1000000000000000010
+Reference 100000000010
+Date: 18 Mar 2026 02:10 PM
+Note Monthly Allowance
+
+‎POWERED BY
+
+‎onTransaction Successful
+
+e 9
+WS
+e ©
+
+25 EGP
+
+Transfer Amount
+
+(=) From
+TL
+
+test.sender@instapay
+TEST SENDER
+
+Vv
+(=) To
+ت*** ت***
+1000000000000000010
+Reference 100000000010
+Date: 18 Mar 2026 02:10 PM
+Note Monthly Allowance
+POWERED BY
+
+onTransaction Successful
+
+. 8
+v
+« ©
+
+25 EcP
+
+Transfer Amount
+
+(=) From
+‏لل‎
+
+test.sender@instapay
+‎TEST SENDER‏
+
+‎Vv
+
+‎To‏ م
+
+‎|| Kk, 301+ a *eK kK
+
+‎1000000000000000010
+‎Reference 100000000010
+Date: 18 Mar 2026 02:10 PM
+Note Monthly Allowance
+
+‎POWERED BY
+
+‎on

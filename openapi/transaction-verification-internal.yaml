@@ -1,0 +1,866 @@
+openapi: 3.0.3
+info:
+  title: 'Transaction Verification Internal API (service-to-service)'
+  version: '1.0'
+servers:
+  -
+    url: 'https://{host}/api/internal/transaction-verification/v1'
+    variables:
+      host:
+        default: api.example.com
+        description: 'API host — override for your environment (staging vs production).'
+security:
+  -
+    hmacService: []
+paths:
+  /verifications:
+    post:
+      operationId: transaction-verification.internal.v1.verifications.store
+      summary: 'Submit a receipt. The file travels base64-encoded inside the JSON, so the signature covers it'
+      tags:
+        - Verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                subject_type:
+                  type: string
+                  maxLength: 64
+                subject_id:
+                  type: string
+                  maxLength: 64
+                merchant_id:
+                  type: integer
+                  minimum: 1.0
+                  nullable: true
+                expected_amount_minor:
+                  type: integer
+                  minimum: 1.0
+                currency:
+                  type: string
+                  pattern: '^[A-Z]{3}$'
+                  nullable: true
+                expected_destination:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                      enum:
+                        - phone
+                        - instapay_handle
+                        - bank
+                    value:
+                      type: string
+                      maxLength: 255
+                  required:
+                    - type
+                    - value
+                idempotency_key:
+                  type: string
+                  maxLength: 255
+                file_base64:
+                  type: string
+                context:
+                  type: object
+                  description: 'Free-form object stored with the verification, e.g. who uploaded it.'
+                  additionalProperties: {  }
+                  nullable: true
+              required:
+                - subject_type
+                - subject_id
+                - expected_amount_minor
+                - expected_destination
+                - idempotency_key
+                - file_base64
+      responses:
+        202:
+          description: 'Accepted and queued (or the verification already made with this idempotency key).'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      uuid:
+                        type: string
+                      subject_type:
+                        type: string
+                      subject_id:
+                        type: string
+                      status:
+                        type: string
+                      verdict:
+                        type: string
+                        nullable: true
+                      checks:
+                        type: object
+                        additionalProperties:
+                          type: object
+                          additionalProperties: {  }
+                      duplicate_of:
+                        type: array
+                        items:
+                          type: string
+                      extracted:
+                        type: object
+                        additionalProperties:
+                          anyOf:
+                            -
+                              type: string
+                            -
+                              type: integer
+                          nullable: true
+                      error:
+                        type: string
+                        nullable: true
+                    required:
+                      - uuid
+                      - subject_type
+                      - subject_id
+                      - status
+                      - verdict
+                      - checks
+                      - duplicate_of
+                      - extracted
+                      - error
+                required:
+                  - success
+                  - data
+        422:
+          description: 'Invalid body or file (error: validation, file_invalid, file_too_large, file_type).'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        415:
+          description: 'The body is not JSON (error: json_required).'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        401:
+          description: 'Missing, wrong, expired or reused signature.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        403:
+          description: 'Caller IP not allowed.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        429:
+          description: 'More than 30 writes a minute.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        503:
+          description: 'The API is switched off.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+    get:
+      operationId: transaction-verification.internal.v1.verifications.index
+      summary: "A subject's verifications, newest first"
+      tags:
+        - Verification
+      parameters:
+        -
+          name: subject_type
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 64
+        -
+          name: subject_id
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 64
+        -
+          name: per_page
+          in: query
+          description: '1-100, default 20.'
+          schema:
+            type: integer
+        -
+          name: page
+          in: query
+          description: 'Page number, default 1.'
+          schema:
+            type: integer
+      responses:
+        200:
+          description: 'One page of verifications.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            uuid:
+                              type: string
+                            subject_type:
+                              type: string
+                            subject_id:
+                              type: string
+                            status:
+                              type: string
+                            verdict:
+                              type: string
+                              nullable: true
+                            checks:
+                              type: object
+                              additionalProperties:
+                                type: object
+                                additionalProperties: {  }
+                            duplicate_of:
+                              type: array
+                              items:
+                                type: string
+                            extracted:
+                              type: object
+                              additionalProperties:
+                                anyOf:
+                                  -
+                                    type: string
+                                  -
+                                    type: integer
+                                nullable: true
+                            error:
+                              type: string
+                              nullable: true
+                          required:
+                            - uuid
+                            - subject_type
+                            - subject_id
+                            - status
+                            - verdict
+                            - checks
+                            - duplicate_of
+                            - extracted
+                            - error
+                      meta:
+                        type: object
+                        properties:
+                          current_page:
+                            type: integer
+                          per_page:
+                            type: integer
+                          last_page:
+                            type: integer
+                          total:
+                            type: integer
+                        required:
+                          - current_page
+                          - per_page
+                          - last_page
+                          - total
+                    required:
+                      - items
+                      - meta
+                required:
+                  - success
+                  - data
+        422:
+          description: 'subject_type or subject_id missing.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        401:
+          description: 'Missing, wrong, expired or reused signature.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        403:
+          description: 'Caller IP not allowed.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        429:
+          description: 'More than 600 reads a minute.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        503:
+          description: 'The API is switched off.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+  '/verifications/{uuid}':
+    get:
+      operationId: transaction-verification.internal.v1.verifications.show
+      summary: 'One verification: status, verdict, checks and what was read (masked)'
+      tags:
+        - Verification
+      parameters:
+        -
+          name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: 'The verification.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      uuid:
+                        type: string
+                      subject_type:
+                        type: string
+                      subject_id:
+                        type: string
+                      status:
+                        type: string
+                      verdict:
+                        type: string
+                        nullable: true
+                      checks:
+                        type: object
+                        additionalProperties:
+                          type: object
+                          additionalProperties: {  }
+                      duplicate_of:
+                        type: array
+                        items:
+                          type: string
+                      extracted:
+                        type: object
+                        additionalProperties:
+                          anyOf:
+                            -
+                              type: string
+                            -
+                              type: integer
+                          nullable: true
+                      error:
+                        type: string
+                        nullable: true
+                    required:
+                      - uuid
+                      - subject_type
+                      - subject_id
+                      - status
+                      - verdict
+                      - checks
+                      - duplicate_of
+                      - extracted
+                      - error
+                required:
+                  - success
+                  - data
+        404:
+          description: 'No verification with this uuid.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        401:
+          description: 'Missing, wrong, expired or reused signature.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        403:
+          description: 'Caller IP not allowed.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        429:
+          description: 'More than 600 reads a minute.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        503:
+          description: 'The API is switched off.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+  '/verifications/{uuid}/reprocess':
+    post:
+      operationId: transaction-verification.internal.v1.verifications.reprocess
+      summary: 'Read the receipt again with the current engines and decide again'
+      tags:
+        - Verification
+      parameters:
+        -
+          name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        202:
+          description: 'Queued again; a receipt still waiting or being read is returned as it is.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      uuid:
+                        type: string
+                      subject_type:
+                        type: string
+                      subject_id:
+                        type: string
+                      status:
+                        type: string
+                      verdict:
+                        type: string
+                        nullable: true
+                      checks:
+                        type: object
+                        additionalProperties:
+                          type: object
+                          additionalProperties: {  }
+                      duplicate_of:
+                        type: array
+                        items:
+                          type: string
+                      extracted:
+                        type: object
+                        additionalProperties:
+                          anyOf:
+                            -
+                              type: string
+                            -
+                              type: integer
+                          nullable: true
+                      error:
+                        type: string
+                        nullable: true
+                    required:
+                      - uuid
+                      - subject_type
+                      - subject_id
+                      - status
+                      - verdict
+                      - checks
+                      - duplicate_of
+                      - extracted
+                      - error
+                required:
+                  - success
+                  - data
+        404:
+          description: 'No verification with this uuid.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        401:
+          description: 'Missing, wrong, expired or reused signature.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        403:
+          description: 'Caller IP not allowed.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        429:
+          description: 'More than 30 writes a minute.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        503:
+          description: 'The API is switched off.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+  '/verifications/{uuid}/file':
+    get:
+      operationId: transaction-verification.internal.v1.verifications.file
+      summary: 'A redirect to a link to the receipt image that expires in 5 minutes'
+      tags:
+        - Verification
+      parameters:
+        -
+          name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        302:
+          description: 'A redirect to the link to the receipt.'
+          content:
+            text/html:
+              schema:
+                type: string
+          headers:
+            Location:
+              description: 'The link to the receipt, valid for 5 minutes.'
+              required: true
+              schema:
+                type: string
+        401:
+          description: 'Missing, wrong, expired or reused signature.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        403:
+          description: 'Caller IP not allowed.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        404:
+          description: 'No verification with this uuid.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        429:
+          description: 'More than 600 reads a minute.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+        503:
+          description: 'The API is switched off.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - success
+                  - error
+                  - message
+components:
+  securitySchemes:
+    hmacService:
+      type: apiKey
+      description: "HMAC-SHA256 service authentication. Send ALSO (all REQUIRED):\nX-Service-Key-Id, X-Service-Timestamp, X-Service-Nonce.\n\ncanonical = METHOD \\n PATH?SORTED_QUERY \\n sha256hex(rawBody) \\n TIMESTAMP \\n NONCE\nsignature = lowercase-hex HMAC-SHA256(canonical, secret)\nConstraints: timestamp within ±300s of now; nonce = 32 lowercase hex, single-use.\n\nWorked vector — verify your signer reproduces this exactly BEFORE calling the API.\nThis uses a TEST key/secret (\"test_secret_do_not_use\") — NEVER a production credential.\n  secret : test_secret_do_not_use\n  request: GET /api/internal/affiliate/v1/affiliates/abc-123/wallet?merchant_id=11&page=2\n  canonical (\\n-joined lines):\n    GET\n    /api/internal/affiliate/v1/affiliates/abc-123/wallet?merchant_id=11&page=2\n    e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855   # sha256(\"\")\n    1700000000\n    0123456789abcdef0123456789abcdef\n  X-Service-Signature = ad09764034d2dcbf9d27a3ab26ace242390f7c535ef4d995485a9128a2631755"
+      in: header
+      name: X-Service-Signature

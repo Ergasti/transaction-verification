@@ -1,0 +1,48 @@
+{
+    "name": "ergasti/transaction-verification",
+    "description": "Reads payout receipt screenshots (OCR) and checks amount, recipient and reuse. Warns, never blocks.",
+    "type": "library",
+    "license": "proprietary",
+    "require": {
+        "php": "^8.3",
+        "ext-gd": "*",
+        "guzzlehttp/guzzle": "^7.8",
+        "laravel/framework": "^12.0"
+    },
+    "require-dev": {
+        "hotmeteor/spectator": "^3.0",
+        "laravel/pint": "^1.27",
+        "orchestra/testbench": "^10.0",
+        "phpunit/phpunit": "^11.5",
+        "symfony/yaml": "^7.4"
+    },
+    "suggest": {
+        "ext-exif": "Turns phone photos upright from their EXIF orientation.",
+        "dedoc/scramble": "Generates the internal API's OpenAPI document from the controller attributes."
+    },
+    "autoload": {
+        "psr-4": {
+            "Modules\\TransactionVerification\\": "app/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modules\\TransactionVerification\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Modules\\TransactionVerification\\Providers\\TransactionVerificationServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "platform": {
+            "php": "8.3.0"
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
