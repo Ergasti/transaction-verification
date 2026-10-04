@@ -1,0 +1,7 @@
+/vendor/
+composer.lock
+.phpunit.cache/
+.phpunit.result.cache
+ocr-sidecar/__pycache__/
+tests/fixtures/instapay/
+.env
