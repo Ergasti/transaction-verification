@@ -11,7 +11,7 @@ A Laravel 12 package (PHP 8.3+). The namespace is `Modules\TransactionVerificati
 
 ## Install
 
-**1. Require it.** The repo is private, so Composer needs a read-only GitHub token for it:
+**1. Require it.** The repo is public, so no token is needed:
 
 ```json
 "repositories": [{"type": "vcs", "url": "https://github.com/Ergasti/transaction-verification"}],
@@ -19,10 +19,10 @@ A Laravel 12 package (PHP 8.3+). The namespace is `Modules\TransactionVerificati
 ```
 
 ```bash
-composer config --global github-oauth.github.com <token>   # a laptop
-# CI and Docker builds: pass COMPOSER_AUTH as a build secret; never bake the token into an image
 composer update ergasti/transaction-verification
 ```
+
+A busy CI can hit GitHub's limit for anonymous requests; a token with no scopes in `COMPOSER_AUTH` lifts it.
 
 Laravel finds the service provider by itself.
 
