@@ -16,6 +16,8 @@
   receipt that finished before it.
 - Events are notifications: read the current result with `find(uuid)` before acting on one.
 - Upgrading from 0.1: receipts already on the old disk are left there; delete them by hand.
+- New `php artisan transaction-verification:install`: picks the database connection from the app's list (default
+  selected) and writes a one-line `config/transaction-verification.php`.
 
 ## 0.1.0
 

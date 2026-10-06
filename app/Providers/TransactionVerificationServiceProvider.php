@@ -41,7 +41,7 @@ class TransactionVerificationServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        // An app pins its own values in code: php artisan vendor:publish --tag=transaction-verification-config
+        // The full file, for an app that wants it; transaction-verification:install writes just the connection.
         $this->publishes([__DIR__.'/../../config/transaction-verification.php' => config_path('transaction-verification.php')], 'transaction-verification-config');
         $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
         $this->loadRoutesFrom(__DIR__.'/../../routes/internal.php');
@@ -53,7 +53,10 @@ class TransactionVerificationServiceProvider extends ServiceProvider
         if (method_exists($kernel, 'addToMiddlewarePriorityBefore')) {
             $kernel->addToMiddlewarePriorityBefore([ThrottleRequests::class, ThrottleRequestsWithRedis::class], VerifyServiceCaller::class);
         }
-        $this->commands([\Modules\TransactionVerification\Console\ShadowReportCommand::class]);
+        $this->commands([
+            \Modules\TransactionVerification\Console\InstallCommand::class,
+            \Modules\TransactionVerification\Console\ShadowReportCommand::class,
+        ]);
 
         // 429s and the router's own 404/405 (a malformed uuid, a wrong method) in the API's JSON envelope too.
         $handler = $this->app->make(ExceptionHandler::class);

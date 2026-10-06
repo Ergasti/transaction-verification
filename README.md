@@ -39,16 +39,16 @@ The package keeps its two tables on the database connection you name (defined in
 | `TRANSACTION_VERIFICATION_RAPIDOCR_URL` | `http://ocr_rapid:8080` | Where the RapidOCR container answers |
 | `TRANSACTION_VERIFICATION_ENABLED` | `false` | Only read by callers that check it (a switch for your own submit code) |
 
-**3. Pin your connection in code** (recommended, so a missing `.env` line can't put the tables in the wrong database).
-Create `config/transaction-verification.php` with only what you change; everything else keeps the package's defaults:
+**3. Pin your connection in code** (recommended, so a missing `.env` line can't put the tables in the wrong database):
 
-```php
-<?php
-
-return [
-    'connection' => env('TRANSACTION_VERIFICATION_DB_CONNECTION', 'mysql'),
-];
+```bash
+php artisan transaction-verification:install
 ```
+
+It lists your app's database connections with the default selected (if unsure, keep it: it's the database your app
+already uses) and writes `config/transaction-verification.php` with only that line; everything else keeps the
+package's defaults. In a script: `--connection=<name> --no-interaction`. It won't overwrite an existing file without
+`--force`. Changed the connection after migrating? Run `php artisan migrate` again: the tables were made on the old one.
 
 (`php artisan vendor:publish --tag=transaction-verification-config` copies the full file instead. A full copy hides new
 defaults in later versions.)
