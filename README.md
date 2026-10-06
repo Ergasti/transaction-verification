@@ -26,9 +26,11 @@ A busy CI can hit GitHub's limit for anonymous requests; a token with no scopes 
 
 Laravel finds the service provider by itself.
 
-**2. Create the tables:** `php artisan migrate` (two tables, on the connection below).
+**2. Settings** (`.env`):
 
-**3. Settings** (`.env`):
+The package doesn't choose where receipts go: it stores the screenshots on the Laravel disk you name and its two
+tables on the connection you name. You define both in your app (`config/filesystems.php`, `config/database.php`), so
+it works the same with S3, Hetzner, a local folder or any database.
 
 | Variable | Default | Set it to |
 |---|---|---|
@@ -57,19 +59,33 @@ A disk with timeouts, so a stuck upload gives up instead of holding a worker (`c
 ],
 ```
 
-**4. Pin values in code** (recommended, so a missing `.env` line can't silently change them):
+Create the bucket with public access **off**: the package reads files through the disk, never by public link. Put the
+`RECEIPTS_S3_*` values in `.env`.
 
-```bash
-php artisan vendor:publish --tag=transaction-verification-config
+**3. Pin your storage in code** (recommended, so a missing `.env` line can't send receipts to the wrong place).
+Create `config/transaction-verification.php` with only what you change; everything else keeps the package's defaults:
+
+```php
+<?php
+
+return [
+    'disk' => env('TRANSACTION_VERIFICATION_DISK', 'receipts'),
+    'connection' => env('TRANSACTION_VERIFICATION_DB_CONNECTION', 'mysql'),
+];
 ```
+
+(`php artisan vendor:publish --tag=transaction-verification-config` copies the full file instead. A full copy hides new
+defaults in later versions.)
+
+**4. Create the tables:** `php artisan migrate` (two tables, on the connection set above).
 
 **5. OCR.**
 - Tesseract and Poppler in the app's image: `apt-get install tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng poppler-utils`.
-- RapidOCR as a compose service, built from the package (a published image comes later):
+- RapidOCR as a compose service, from the image the package publishes with each release:
 
 ```yaml
 ocr_rapid:
-  build: ./vendor/ergasti/transaction-verification/ocr-sidecar
+  image: ghcr.io/ergasti/transaction-verification-ocr:0.1.1   # the same version as the package
   restart: always
   mem_limit: 2g
   cpus: 4
@@ -79,6 +95,34 @@ ocr_rapid:
 
 No port needs publishing; the app reaches it on the compose network. Down or slow, receipts go to a person, never
 approved.
+
+- **Keep the image version equal to the package version** (`composer show ergasti/transaction-verification`).
+- **The image is private:** each server logs in once (see [Pulling the OCR image](#pulling-the-ocr-image) below).
+- **Fallback:** `build: ./vendor/ergasti/transaction-verification/ocr-sidecar` instead of `image:` (needs internet for
+  the build, ~1 GB).
+
+#### Pulling the OCR image
+
+The image is private, so GitHub hands it only to a logged-in server. Do this **once per server**:
+
+1. **Make a token** on GitHub: Settings → Developer settings → Personal access tokens → **Tokens (classic)** →
+   Generate new token. Tick **only `read:packages`** (it can download packages and nothing else). Prefer an
+   account meant for servers (a bot account in the Ergasti org) over a person's, so it survives people leaving.
+   Give it an expiry you will notice, and note where it is used.
+2. **Log in on the server**, as the user that runs `docker compose`:
+   ```bash
+   echo <token> | docker login ghcr.io -u <github-username> --password-stdin
+   ```
+   It prints `Login Succeeded`. Piping the token keeps it out of the shell history; Docker stores the login, so
+   later pulls just work.
+3. **Pull and start it:** `docker compose pull ocr_rapid && docker compose up -d ocr_rapid`, then check
+   `docker compose ps ocr_rapid` shows **healthy**.
+
+- **Skipped or expired login:** the pull fails with `denied` / `unauthorized` and the container doesn't start (an
+  already running one keeps running). Payouts are unaffected: without the second engine, receipts go to a person,
+  never to a wrong match. Log in and pull again.
+- **Rotating the token:** make a new one, run the same `docker login` with it, then revoke the old one. Nothing else
+  changes.
 
 **6. Keep running:** the scheduler (it recovers rows whose queue job was lost, every 5 minutes) and a queue worker on
 `TRANSACTION_VERIFICATION_QUEUE`.

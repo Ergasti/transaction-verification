@@ -1,4 +1,5 @@
-# RapidOCR sidecar for TransactionVerification (second OCR engine). Built by docker-compose.yml as ocr_rapid.
+# RapidOCR sidecar for TransactionVerification (second OCR engine). Published by the package CI as
+# ghcr.io/ergasti/transaction-verification-ocr:<version> on each release; apps pull that, or build this folder.
 # Pinned by digest (python 3.11.16), with every package pinned in requirements.txt: a rebuild is the image measured.
 FROM python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e
 

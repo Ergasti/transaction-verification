@@ -11,3 +11,5 @@ First release as a package; the code is the `Modules/TransactionVerification` mo
   `transaction-verification.connection`.
 - The internal API renders its own `429 rate_limited` reply instead of relying on the host app's handler.
 - Tests run under Orchestra Testbench, with no app around them.
+- The RapidOCR sidecar is published as `ghcr.io/ergasti/transaction-verification-ocr:<version>` on each release,
+  after its tests and an end-to-end read pass.
