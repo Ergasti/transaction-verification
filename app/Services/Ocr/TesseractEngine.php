@@ -37,7 +37,7 @@ class TesseractEngine implements OcrEngine
 
             // The passes are independent, so they run side by side, `parallel` at a time.
             foreach (array_chunk($images, max(1, (int) ($config['parallel'] ?? 1)), true) as $group) {
-                // Each on one thread: same speed per pass, less than half the CPU (plan §2).
+                // Each on one thread: same speed per pass, less than half the CPU (docs/plan.md §2).
                 $running = Process::pool(function (Pool $pool) use ($group, $config) {
                     foreach ($group as $i => $image) {
                         $pool->as((string) $i)->timeout((int) $config['timeout'])->env(['OMP_THREAD_LIMIT' => '1'])->command([

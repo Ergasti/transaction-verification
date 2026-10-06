@@ -26,7 +26,7 @@ return [
         // Renders page 1 of a PDF receipt to PNG (poppler-utils).
         'pdftoppm_binary' => env('TRANSACTION_VERIFICATION_PDFTOPPM_BINARY', 'pdftoppm'),
         'langs' => 'ara+eng',
-        // [scale, threshold] per pass, measured on the fixtures (plan §3). The 1.5x pass sees the glyphs at
+        // [scale, threshold] per pass, measured on the fixtures (docs/plan.md §3). The 1.5x pass sees the glyphs at
         // another size, so a dot every 2x pass loses ("1.50" as "150") splits the vote instead of passing.
         'passes' => [[2, 0.75], [2, 0.80], [2, 0.85], [1.5, 0.80]],
         // Seconds per pass (~1 s normally; one took over 12 s on a loaded box). The check runs inside the caller's
