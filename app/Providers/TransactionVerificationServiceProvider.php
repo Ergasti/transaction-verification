@@ -41,7 +41,7 @@ class TransactionVerificationServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        // The full file, for an app that wants it; transaction-verification:install writes just the connection.
+        // Optional: every setting is an env variable, so an app needs no config file of its own.
         $this->publishes([__DIR__.'/../../config/transaction-verification.php' => config_path('transaction-verification.php')], 'transaction-verification-config');
         $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
         $this->loadRoutesFrom(__DIR__.'/../../routes/internal.php');
@@ -54,7 +54,6 @@ class TransactionVerificationServiceProvider extends ServiceProvider
             $kernel->addToMiddlewarePriorityBefore([ThrottleRequests::class, ThrottleRequestsWithRedis::class], VerifyServiceCaller::class);
         }
         $this->commands([
-            \Modules\TransactionVerification\Console\InstallCommand::class,
             \Modules\TransactionVerification\Console\ShadowReportCommand::class,
         ]);
 

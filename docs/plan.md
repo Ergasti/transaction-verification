@@ -2,7 +2,7 @@
 
 The design document, written while the checker was built inside surgeflo-wharehouse (Ergasti/surgeflo-wharehouse#639) and moved here with the code. Status: **phases 1–4 implemented** (Tesseract, RapidOCR as a second engine that must agree, an internal HTTP API that ships off, the first app's hook-up behind a flag that ships off); shadow mode still to run (§10).
 
-Paths below that start with `Modules/TransactionVerification/` are where it was built; here they are relative to the repo root. Paths like `Modules/Affiliate/…`, `Dockerfile` or `docker-compose.yml` are in surgeflo-wharehouse, the first app to use it (it requires `^0.2` and pins the `portal` connection with `php artisan transaction-verification:install --connection=portal`).
+Paths below that start with `Modules/TransactionVerification/` are where it was built; here they are relative to the repo root. Paths like `Modules/Affiliate/…`, `Dockerfile` or `docker-compose.yml` are in surgeflo-wharehouse, the first app to use it (it requires `^0.3` and sets `TRANSACTION_VERIFICATION_DB_CONNECTION=portal` in its `.env.example`).
 
 **Since 0.2.0 the receipt is never stored by the checker:** `submit()` checks it in the request, from the upload, after Affiliate's response. The parts below about the receipt disk (`hetzner_receipts`), the queue job and the `ocr` worker, `reprocess`, the receipt link and the stored OCR text describe 0.1 and are gone; §11 Q7 (how long receipts are kept) no longer applies.
 

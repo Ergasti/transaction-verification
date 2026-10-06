@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Removed `php artisan transaction-verification:install`: every setting is an env variable, so an app needs no config
+  file. Set `TRANSACTION_VERIFICATION_DB_CONNECTION` before the first `migrate`. A file written by the command
+  keeps working; `vendor:publish --tag=transaction-verification-config` still copies the full file.
+
 ## 0.3.0
 
 **Breaking.** `ExpectedDestination`'s type is the new `DestinationTypeEnum` (`PHONE`, `INSTAPAY_HANDLE`, `BANK`);

@@ -39,19 +39,12 @@ The package keeps its two tables on the database connection you name (defined in
 | `TRANSACTION_VERIFICATION_RAPIDOCR_URL` | `http://ocr_rapid:8080` | Where the RapidOCR container answers |
 | `TRANSACTION_VERIFICATION_ENABLED` | `false` | Only read by callers that check it (a switch for your own submit code) |
 
-**3. Pin your connection in code** (recommended, so a missing `.env` line can't put the tables in the wrong database):
+**3. No config file needed.** Every setting is an env variable. Set `TRANSACTION_VERIFICATION_DB_CONNECTION` in every
+`.env` (put it in `.env.example`) **before the first `migrate`**: without it the tables go to the app's default
+database. Changed it after migrating? Run `php artisan migrate` again: the tables were made on the old one.
 
-```bash
-php artisan transaction-verification:install
-```
-
-It lists your app's database connections with the default selected (if unsure, keep it: it's the database your app
-already uses) and writes `config/transaction-verification.php` with only that line; everything else keeps the
-package's defaults. In a script: `--connection=<name> --no-interaction`. It won't overwrite an existing file without
-`--force`. Changed the connection after migrating? Run `php artisan migrate` again: the tables were made on the old one.
-
-(`php artisan vendor:publish --tag=transaction-verification-config` copies the full file instead. A full copy hides new
-defaults in later versions.)
+(`php artisan vendor:publish --tag=transaction-verification-config` copies the full file if an app wants one. A full
+copy hides new defaults in later versions.)
 
 **4. Create the tables:** `php artisan migrate` (two tables, on the connection set above).
 
@@ -65,7 +58,7 @@ disk until the request ends.
 
 ```yaml
 ocr_rapid:
-  image: ghcr.io/ergasti/transaction-verification-ocr:0.2.0   # the same version as the package
+  image: ghcr.io/ergasti/transaction-verification-ocr:0.3.0   # the same version as the package
   restart: always
   mem_limit: 2g
   cpus: 4
