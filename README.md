@@ -30,6 +30,10 @@ Laravel finds the service provider by itself.
 
 **3. Settings** (`.env`):
 
+The package doesn't choose where receipts go: it stores the screenshots on the Laravel disk you name and its two
+tables on the connection you name. You define both in your app (`config/filesystems.php`, `config/database.php`), so
+it works the same with S3, Hetzner, a local folder or any database.
+
 | Variable | Default | Set it to |
 |---|---|---|
 | `TRANSACTION_VERIFICATION_DISK` | `local` | A **private** disk for the screenshots. Production: an S3-style disk with timeouts (below) |
@@ -57,11 +61,20 @@ A disk with timeouts, so a stuck upload gives up instead of holding a worker (`c
 ],
 ```
 
-**4. Pin values in code** (recommended, so a missing `.env` line can't silently change them):
+**4. Pin your storage in code** (recommended, so a missing `.env` line can't send receipts to the wrong place).
+Create `config/transaction-verification.php` with only what you change; everything else keeps the package's defaults:
 
-```bash
-php artisan vendor:publish --tag=transaction-verification-config
+```php
+<?php
+
+return [
+    'disk' => env('TRANSACTION_VERIFICATION_DISK', 'receipts'),
+    'connection' => env('TRANSACTION_VERIFICATION_DB_CONNECTION', 'mysql'),
+];
 ```
+
+(`php artisan vendor:publish --tag=transaction-verification-config` copies the full file instead. A full copy hides new
+defaults in later versions.)
 
 **5. OCR.**
 - Tesseract and Poppler in the app's image: `apt-get install tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng poppler-utils`.
