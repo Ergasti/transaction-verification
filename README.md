@@ -43,9 +43,6 @@ The package keeps its two tables on the database connection you name (defined in
 `.env` (put it in `.env.example`) **before the first `migrate`**: without it the tables go to the app's default
 database. Changed it after migrating? Run `php artisan migrate` again: the tables were made on the old one.
 
-(`php artisan vendor:publish --tag=transaction-verification-config` copies the full file if an app wants one. A full
-copy hides new defaults in later versions.)
-
 **4. Create the tables:** `php artisan migrate` (two tables, on the connection set above).
 
 **Call it after the response.** `submit()` checks the receipt there and then (~1-3 s), so in a web request call it

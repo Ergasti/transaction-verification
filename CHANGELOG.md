@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- Removed `php artisan transaction-verification:install`: every setting is an env variable, so an app needs no config
-  file. Set `TRANSACTION_VERIFICATION_DB_CONNECTION` before the first `migrate`. A file written by the command
-  keeps working; `vendor:publish --tag=transaction-verification-config` still copies the full file.
+- Removed `php artisan transaction-verification:install` and the `transaction-verification-config` publish tag: every
+  setting is an env variable, so an app needs no config file. Set `TRANSACTION_VERIFICATION_DB_CONNECTION` before
+  the first `migrate`. A config file an app already has keeps working.
 
 ## 0.3.0
 
