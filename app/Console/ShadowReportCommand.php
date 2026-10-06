@@ -4,6 +4,7 @@ namespace Modules\TransactionVerification\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
+use Modules\TransactionVerification\Enums\CheckEnum;
 use Modules\TransactionVerification\Models\TransactionVerification;
 
 /** Shadow mode: one CSV line per payout check, to label by hand against the accuracy gate. Outcomes only, no values. */
@@ -27,7 +28,9 @@ class ShadowReportCommand extends Command
 
         $since = $sinceOption === null ? now()->subDays(14) : Carbon::createFromFormat('!Y-m-d', $sinceOption);
 
-        $this->csv(['uuid', 'subject_id', 'created_at', 'status', 'verdict', 'confidence', 'amount', 'destination', 'duplicate', 'label']);
+        $checks = [CheckEnum::AMOUNT->value, CheckEnum::DESTINATION->value, CheckEnum::DUPLICATE->value];
+
+        $this->csv(['uuid', 'subject_id', 'created_at', 'status', 'verdict', 'confidence', ...$checks, 'label']);
 
         // Only what the report prints, in batches.
         $rows = TransactionVerification::where('subject_type', 'affiliate_payout')->where('created_at', '>=', $since->startOfDay())
@@ -41,7 +44,7 @@ class ShadowReportCommand extends Command
                 $row->status->value,
                 $row->verdict?->value,
                 $row->confidence,
-                ...array_map(fn (string $check) => $row->checks[$check]['outcome'] ?? '', ['amount', 'destination', 'duplicate']),
+                ...array_map(fn (string $check) => $row->checks[$check]['outcome'] ?? '', $checks),
                 '',
             ]);
         }

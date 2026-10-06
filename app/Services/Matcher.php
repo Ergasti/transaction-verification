@@ -5,6 +5,7 @@ namespace Modules\TransactionVerification\Services;
 use Modules\TransactionVerification\Data\CheckResult;
 use Modules\TransactionVerification\Data\ExpectedDestination;
 use Modules\TransactionVerification\Data\ExtractedFields;
+use Modules\TransactionVerification\Enums\CheckEnum as Check;
 use Modules\TransactionVerification\Enums\CheckOutcomeEnum as Outcome;
 use Modules\TransactionVerification\Enums\VerdictEnum;
 
@@ -18,16 +19,16 @@ class Matcher
     public function decide(int $expectedAmountMinor, ExpectedDestination $expected, ExtractedFields $found, array $duplicates, float $threshold): array
     {
         $checks = [
-            'amount' => $this->amount($expectedAmountMinor, $found->amountMinor),
-            'destination' => $this->destination($expected, $found),
-            'duplicate' => $duplicates === []
+            Check::AMOUNT->value => $this->amount($expectedAmountMinor, $found->amountMinor),
+            Check::DESTINATION->value => $this->destination($expected, $found),
+            Check::DUPLICATE->value => $duplicates === []
                 ? new CheckResult(Outcome::PASS)
                 : new CheckResult(Outcome::FAIL, [
                     'of' => array_values(array_unique(array_column($duplicates, 'uuid'))),
                     'by' => array_values(array_unique(array_column($duplicates, 'method'))),
                 ]),
             // Informational in v1: a raw screenshot often has no reference. Never part of the verdict.
-            'reference' => new CheckResult($this->normaliseReference($found->reference) === null ? Outcome::MISSING : Outcome::PASS),
+            Check::REFERENCE->value => new CheckResult($this->normaliseReference($found->reference) === null ? Outcome::MISSING : Outcome::PASS),
         ];
 
         $confidence = $this->decidingConfidence($expected, $found);
@@ -63,12 +64,12 @@ class Matcher
      */
     private function verdict(array $checks, array $scores, string $destinationKey, ?float $confidence, float $threshold): VerdictEnum
     {
-        $amount = $checks['amount']->outcome;
-        $destination = $checks['destination']->outcome;
+        $amount = $checks[Check::AMOUNT->value]->outcome;
+        $destination = $checks[Check::DESTINATION->value]->outcome;
         $sure = fn (string $field) => ($scores[$field] ?? 1.0) >= $threshold;
 
         return match (true) {
-            $checks['duplicate']->outcome === Outcome::FAIL => VerdictEnum::DUPLICATE,
+            $checks[Check::DUPLICATE->value]->outcome === Outcome::FAIL => VerdictEnum::DUPLICATE,
             $amount === Outcome::MISSING || $destination === Outcome::MISSING => VerdictEnum::UNREADABLE,
             // A failed check is a mismatch only when that field was read surely; an unsure one goes to a person.
             ($amount === Outcome::FAIL && $sure('amount')) || ($destination === Outcome::FAIL && $sure($destinationKey)) => VerdictEnum::MISMATCH,

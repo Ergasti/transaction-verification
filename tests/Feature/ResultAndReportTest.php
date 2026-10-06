@@ -211,6 +211,17 @@ class ResultAndReportTest extends TestCase
         $this->assertSame('tesseract+rapidocr', TransactionVerification::where('uuid', $result->uuid)->value('engine'));
     }
 
+    public function test_a_mode_that_is_not_text_reads_alongside_tesseract_like_always(): void
+    {
+        $tesseract = $this->tesseractReading(self::RECEIPT);
+        config(['transaction-verification.second_engine' => ['mode' => ['off'], 'url' => 'http://ocr.test', 'timeout' => 5]]);
+        Http::fake(['ocr.test/read' => Http::response(['lines' => explode("\n", self::RECEIPT), 'version' => 'rapidocr test'])]);
+
+        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->submit($this->request())->verdict);
+        $this->assertTrue($tesseract->gotMeanwhile);
+        Http::assertSentCount(1);
+    }
+
     public function test_on_always_two_passes_are_enough_when_both_engines_agree(): void
     {
         $tesseract = $this->tesseractReading(self::RECEIPT);

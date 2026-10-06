@@ -2,7 +2,7 @@
 
 namespace Modules\TransactionVerification\Enums;
 
-/** The result of one check (amount, destination, duplicate, reference). */
+/** The result of one check (see CheckEnum). */
 enum CheckOutcomeEnum: string
 {
     case PASS = 'pass';

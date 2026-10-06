@@ -126,6 +126,15 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame(VerdictEnum::NEEDS_REVIEW, $this->verifier()->submit($this->request())->verdict);
     }
 
+    public function test_a_mode_that_is_not_text_is_always_too(): void
+    {
+        $this->reading(self::RECEIPT);
+        $this->secondReading('always', "3,080 EGP\nTransfer Amount\nTo Instapay\n01000000001");
+        config(['transaction-verification.second_engine.mode' => ['off']]);
+
+        $this->assertSame(VerdictEnum::NEEDS_REVIEW, $this->verifier()->submit($this->request())->verdict);
+    }
+
     public function test_off_never_asks_the_second_engine(): void
     {
         $this->reading(self::RECEIPT);

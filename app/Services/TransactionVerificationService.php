@@ -16,6 +16,8 @@ use Modules\TransactionVerification\Data\ExpectedDestination;
 use Modules\TransactionVerification\Data\ExtractedFields;
 use Modules\TransactionVerification\Data\VerificationRequest;
 use Modules\TransactionVerification\Data\VerificationResult;
+use Modules\TransactionVerification\Enums\CheckEnum;
+use Modules\TransactionVerification\Enums\SecondEngineModeEnum;
 use Modules\TransactionVerification\Enums\VerdictEnum;
 use Modules\TransactionVerification\Enums\VerificationStatusEnum;
 use Modules\TransactionVerification\Events\TransactionVerificationCompleted;
@@ -231,18 +233,17 @@ class TransactionVerificationService implements TransactionVerifier
      */
     private function secondRead(string $path, TransactionVerification $row, ExtractedFields $fields, ?array $early = null): array
     {
-        $mode = config('transaction-verification.second_engine.mode');
+        $mode = SecondEngineModeEnum::current();
         $threshold = (float) config('transaction-verification.confidence_threshold');
         $expected = new ExpectedDestination($row->expected_destination['type'], $row->expected_destination['value']);
 
-        // Any value but 'off' or 'fallback' (a typo too) is 'always': a mistake must not switch the check off.
-        if ($mode === 'off' || ($mode === 'fallback' && $this->matcher->sure($expected, $fields, $threshold))) {
+        if ($mode === SecondEngineModeEnum::OFF || ($mode === SecondEngineModeEnum::FALLBACK && $this->matcher->sure($expected, $fields, $threshold))) {
             return [$fields, null, 0];
         }
 
         [$text, $second, $ms] = $early ?? $this->askSecond($path, $row->id);
 
-        return [$mode === 'fallback' ? $fields->filledFrom($second, $threshold) : $fields->confirmedBy($second), $text, $ms];
+        return [$mode === SecondEngineModeEnum::FALLBACK ? $fields->filledFrom($second, $threshold) : $fields->confirmedBy($second), $text, $ms];
     }
 
     /**
@@ -264,7 +265,7 @@ class TransactionVerificationService implements TransactionVerifier
 
         $all = config('transaction-verification.tesseract.passes');
 
-        if (in_array(config('transaction-verification.second_engine.mode'), ['off', 'fallback'], true)) {
+        if (SecondEngineModeEnum::current() !== SecondEngineModeEnum::ALWAYS) {
             $text = $this->engine->read($path);
 
             return [$text, $parse($text), null, count($all)];
@@ -427,7 +428,7 @@ class TransactionVerificationService implements TransactionVerifier
             status: $row->status,
             verdict: $row->verdict,
             checks: $row->checks ?? [],
-            duplicateOf: $row->checks['duplicate']['of'] ?? [],
+            duplicateOf: $row->checks[CheckEnum::DUPLICATE->value]['of'] ?? [],
             error: $row->error,
             extracted: ExtractedFields::fromArray($row->extracted ?? [])->masked(),
         );
