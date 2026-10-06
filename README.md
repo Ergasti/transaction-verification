@@ -26,9 +26,7 @@ A busy CI can hit GitHub's limit for anonymous requests; a token with no scopes 
 
 Laravel finds the service provider by itself.
 
-**2. Create the tables:** `php artisan migrate` (two tables, on the connection below).
-
-**3. Settings** (`.env`):
+**2. Settings** (`.env`):
 
 The package doesn't choose where receipts go: it stores the screenshots on the Laravel disk you name and its two
 tables on the connection you name. You define both in your app (`config/filesystems.php`, `config/database.php`), so
@@ -61,7 +59,10 @@ A disk with timeouts, so a stuck upload gives up instead of holding a worker (`c
 ],
 ```
 
-**4. Pin your storage in code** (recommended, so a missing `.env` line can't send receipts to the wrong place).
+Create the bucket with public access **off**: the package reads files through the disk, never by public link. Put the
+`RECEIPTS_S3_*` values in `.env`.
+
+**3. Pin your storage in code** (recommended, so a missing `.env` line can't send receipts to the wrong place).
 Create `config/transaction-verification.php` with only what you change; everything else keeps the package's defaults:
 
 ```php
@@ -75,6 +76,8 @@ return [
 
 (`php artisan vendor:publish --tag=transaction-verification-config` copies the full file instead. A full copy hides new
 defaults in later versions.)
+
+**4. Create the tables:** `php artisan migrate` (two tables, on the connection set above).
 
 **5. OCR.**
 - Tesseract and Poppler in the app's image: `apt-get install tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng poppler-utils`.
