@@ -6,12 +6,8 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Queue;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Modules\TransactionVerification\Contracts\OcrEngine;
 use Modules\TransactionVerification\Contracts\ReceiptParser;
@@ -20,19 +16,15 @@ use Modules\TransactionVerification\Data\ExpectedDestination;
 use Modules\TransactionVerification\Data\ExtractedFields;
 use Modules\TransactionVerification\Data\VerificationRequest;
 use Modules\TransactionVerification\Enums\VerdictEnum;
-use Modules\TransactionVerification\Enums\VerificationStatusEnum;
-use Modules\TransactionVerification\Events\TransactionVerificationCompleted;
-use Modules\TransactionVerification\Jobs\ProcessVerificationJob;
 use Modules\TransactionVerification\Models\TransactionVerification;
 use Modules\TransactionVerification\Services\Ocr\TesseractEngine;
 use Modules\TransactionVerification\Services\Preprocess\ImagePreprocessor;
 use Modules\TransactionVerification\Services\Preprocess\PdfPage;
-use Modules\TransactionVerification\Services\TransactionVerificationService;
 use RuntimeException;
 use Modules\TransactionVerification\Tests\TestCase;
 
-/** The public PHP interface beyond submit: what a caller reads back, re-runs and opens. */
-class RerunAndFileTest extends TestCase
+/** Beyond submit: what a caller reads back, the shadow report, the timing log and how the engines share a read. */
+class ResultAndReportTest extends TestCase
 {
     use RefreshDatabase;
 
@@ -44,13 +36,10 @@ class RerunAndFileTest extends TestCase
 
         // Pinned like SubmitVerificationTest: a developer .env may point these elsewhere.
         config([
-            'transaction-verification.disk' => 'hetzner',
-            'transaction-verification.folder' => 'transaction-verifications',
             'transaction-verification.engine' => 'null',
             'transaction-verification.second_engine.mode' => 'off',
             'transaction-verification.confidence_threshold' => 0.90,
         ]);
-        Storage::fake('hetzner');
         Http::preventStrayRequests();
     }
 
@@ -87,195 +76,7 @@ class RerunAndFileTest extends TestCase
         $this->assertSame(['*****', '***@instapay', '****'], [$extracted['phone'], $extracted['handle'], $extracted['account']]);
     }
 
-    public function test_reprocessing_reads_the_receipt_again_and_decides_again(): void
-    {
-        Event::fake([TransactionVerificationCompleted::class]);
-        $this->reading(self::RECEIPT);
-        $first = $this->verifier()->submit($this->request());
-
-        // An engine upgrade now reads another amount off the same receipt.
-        $this->reading(str_replace('3,070', '3,080', self::RECEIPT));
-        $again = $this->verifier()->reprocess($first->uuid);
-
-        $this->assertSame([VerdictEnum::MATCH, VerdictEnum::MISMATCH], [$first->verdict, $again->verdict]);
-        $this->assertSame($first->uuid, $again->uuid);
-        Event::assertDispatchedTimes(TransactionVerificationCompleted::class, 2);
-    }
-
-    public function test_a_reprocessed_receipt_shows_no_old_reading_while_it_waits(): void
-    {
-        $this->reading(self::RECEIPT);
-        $uuid = $this->verifier()->submit($this->request())->uuid;
-        Queue::fake();
-
-        $waiting = $this->verifier()->reprocess($uuid);
-
-        $this->assertSame(VerificationStatusEnum::PENDING, $waiting->status);
-        $this->assertSame([], array_filter($waiting->extracted));
-    }
-
-    public function test_a_copy_cleared_by_a_rerun_is_caught_again_when_the_original_is_rerun_to_the_same_reference(): void
-    {
-        $this->reading(self::RECEIPT);
-        $original = $this->verifier()->submit($this->request('a', subjectId: 1))->uuid;
-        $copy = $this->verifier()->submit($this->request('b', subjectId: 2))->uuid;
-        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy)->verdict);
-
-        // Both are read again and both now show another reference: they are still one transfer.
-        $this->reading(str_replace('100000000001', '100000000002', self::RECEIPT));
-        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->reprocess($copy)->verdict);
-        $this->verifier()->reprocess($original);
-
-        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy)->verdict);
-    }
-
-    public function test_a_copy_is_cleared_when_a_rerun_of_the_original_reads_another_reference(): void
-    {
-        $this->reading(self::RECEIPT);
-        $original = $this->verifier()->submit($this->request('a', subjectId: 1))->uuid;
-        $copy = $this->verifier()->submit($this->request('b', subjectId: 2))->uuid;
-
-        // The original's reference was misread: the copy no longer shares it.
-        $this->reading(str_replace('100000000001', '100000000002', self::RECEIPT));
-        $this->verifier()->reprocess($original);
-
-        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->find($copy)->verdict);
-    }
-
-    public function test_a_copy_is_caught_again_when_the_original_loses_its_reference_and_then_reads_it_again(): void
-    {
-        $this->reading(self::RECEIPT);
-        $original = $this->verifier()->submit($this->request('a', subjectId: 1))->uuid;
-        $copy = $this->verifier()->submit($this->request('b', subjectId: 2))->uuid;
-
-        $this->reading(str_replace('Reference 100000000001', '', self::RECEIPT));
-        $this->verifier()->reprocess($original);
-        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->find($copy)->verdict);
-
-        $this->reading(self::RECEIPT);
-        $this->verifier()->reprocess($original);
-
-        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy)->verdict);
-    }
-
-    public function test_a_copy_is_decided_again_when_a_rerun_that_stored_a_new_reference_is_recovered(): void
-    {
-        $this->reading(self::RECEIPT);
-        $original = $this->verifier()->submit($this->request('a', subjectId: 1))->uuid;
-        $copy = $this->verifier()->submit($this->request('b', subjectId: 2))->uuid;
-
-        // A rerun stored the new reference, then its worker died before the copy was re-checked.
-        $other = str_replace('100000000001', '100000000002', self::RECEIPT);
-        $this->reading($other);
-        $this->verifier()->reprocess($original);
-        TransactionVerification::where('uuid', $copy)->update(['verdict' => VerdictEnum::DUPLICATE->value]);
-        TransactionVerification::where('uuid', $original)->update(['status' => VerificationStatusEnum::PROCESSING->value]);
-        $this->travel(1)->day();
-
-        app(TransactionVerificationService::class)->recoverStale();
-
-        $this->assertSame(VerificationStatusEnum::COMPLETED, $this->verifier()->find($original)->status);
-        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->find($copy)->verdict);
-    }
-
-    public function test_a_copy_whose_verdict_stays_the_same_is_not_announced_again(): void
-    {
-        $this->reading(self::RECEIPT);
-        $original = $this->verifier()->submit($this->request('a', subjectId: 1))->uuid;
-        $this->verifier()->submit($this->request('b', subjectId: 2));
-        Event::fake([TransactionVerificationCompleted::class]);
-
-        $this->verifier()->reprocess($original);
-
-        Event::assertDispatchedTimes(TransactionVerificationCompleted::class, 1);
-    }
-
-    public function test_a_receipt_still_waiting_to_be_read_is_not_queued_twice(): void
-    {
-        Queue::fake();
-        $pending = $this->verifier()->submit($this->request());
-
-        $again = $this->verifier()->reprocess($pending->uuid);
-
-        $this->assertSame(VerificationStatusEnum::PENDING, $again->status);
-        Queue::assertPushed(ProcessVerificationJob::class, 1);
-    }
-
-    public function test_a_failed_receipt_can_be_reprocessed(): void
-    {
-        $this->app->instance(OcrEngine::class, new class implements OcrEngine
-        {
-            public function read(string $localPath): string
-            {
-                throw new RuntimeException('engine crashed');
-            }
-
-            public function name(): string
-            {
-                return 'broken';
-            }
-
-            public function version(): string
-            {
-                return '1';
-            }
-        });
-        $failed = $this->verifier()->submit($this->request());
-
-        $this->reading(self::RECEIPT);
-        $again = $this->verifier()->reprocess($failed->uuid);
-
-        $this->assertSame([VerificationStatusEnum::FAILED, VerificationStatusEnum::COMPLETED], [$failed->status, $again->status]);
-        $this->assertSame(VerdictEnum::MATCH, $again->verdict);
-        $this->assertNull($again->error);
-    }
-
-    public function test_reprocessing_an_unknown_uuid_returns_null(): void
-    {
-        $this->assertNull($this->verifier()->reprocess((string) Str::uuid()));
-    }
-
-    public function test_a_receipt_opens_through_a_link_that_expires(): void
-    {
-        $this->freezeTime();
-        $result = $this->verifier()->submit($this->request());
-
-        $url = $this->verifier()->temporaryFileUrl($result->uuid, 10);
-
-        $this->assertStringContainsString("transaction-verifications/{$result->uuid}.png", $url);
-        $this->assertStringContainsString('expiration='.now()->addMinutes(10)->getTimestamp(), $url);
-        $this->assertNull($this->verifier()->temporaryFileUrl((string) Str::uuid()));
-    }
-
-    public function test_a_receipt_link_lasts_one_to_sixty_minutes(): void
-    {
-        $uuid = $this->verifier()->submit($this->request())->uuid;
-
-        foreach ([0, 61] as $minutes) {
-            try {
-                $this->verifier()->temporaryFileUrl($uuid, $minutes);
-                $this->fail("{$minutes} minutes was accepted.");
-            } catch (InvalidArgumentException) {
-                $this->addToAssertionCount(1);
-            }
-        }
-    }
-
-    public function test_the_reprocess_command_reruns_each_receipt_and_fails_on_an_unknown_one(): void
-    {
-        $this->reading(self::RECEIPT);
-        $uuid = $this->verifier()->submit($this->request())->uuid;
-        $unknown = (string) Str::uuid();
-
-        $this->artisan('transaction-verification:reprocess', ['uuid' => [$uuid, $unknown]])
-            ->expectsOutput("{$uuid}: completed, match")
-            ->expectsOutput("{$unknown}: not found")
-            ->assertFailed();
-
-        $this->artisan('transaction-verification:reprocess', ['uuid' => [$uuid]])->assertSuccessful();
-    }
-
-    public function test_the_shadow_report_lists_recent_payout_checks_with_a_link_and_no_personal_values(): void
+    public function test_the_shadow_report_lists_recent_payout_checks_and_no_personal_values(): void
     {
         $this->reading(self::RECEIPT);
         $old = $this->verifier()->submit($this->request('old', 1))->uuid;
@@ -286,12 +87,11 @@ class RerunAndFileTest extends TestCase
         $output = Artisan::output();
         $lines = array_map('str_getcsv', explode("\n", trim($output)));
 
-        $this->assertSame(['uuid', 'subject_id', 'created_at', 'status', 'verdict', 'confidence', 'amount', 'destination', 'duplicate', 'receipt_link', 'label'], $lines[0]);
+        $this->assertSame(['uuid', 'subject_id', 'created_at', 'status', 'verdict', 'confidence', 'amount', 'destination', 'duplicate', 'label'], $lines[0]);
         $this->assertCount(2, $lines);
         $row = array_combine($lines[0], $lines[1]);
         $this->assertSame($recent, $row['uuid']);
         $this->assertSame(['pass', 'pass', ''], [$row['amount'], $row['destination'], $row['label']]);
-        $this->assertStringContainsString("transaction-verifications/{$recent}", $row['receipt_link']);
         $this->assertStringNotContainsString('01000000001', $output);
     }
 
@@ -338,33 +138,12 @@ class RerunAndFileTest extends TestCase
         $this->assertSame(["'\u{FF1D}HYPERLINK(\"http://x\")", "'\n=1+1"], array_column($rows, 1));
     }
 
-    public function test_the_shadow_report_keeps_going_when_a_link_cannot_be_signed(): void
-    {
-        $this->reading(self::RECEIPT);
-        $uuid = $this->verifier()->submit($this->request())->uuid;
-        $verifier = $this->createStub(TransactionVerifier::class);
-        $verifier->method('temporaryFileUrl')->willThrowException(new RuntimeException('This driver does not support creating temporary URLs.'));
-        $this->app->instance(TransactionVerifier::class, $verifier);
-
-        $this->assertSame(0, Artisan::call('transaction-verification:shadow-report'));
-        $lines = array_map('str_getcsv', explode("\n", trim(Artisan::output())));
-
-        $this->assertSame($uuid, $lines[1][0]);
-        $this->assertSame('', $lines[1][9]);
-    }
-
     public function test_the_shadow_report_refuses_a_date_that_is_not_y_m_d(): void
     {
         $this->assertSame(1, Artisan::call('transaction-verification:shadow-report', ['--since' => 'last tuesday']));
         $this->assertStringContainsString('Y-m-d', Artisan::output());
         // Shaped right, but no such day.
         $this->assertSame(1, Artisan::call('transaction-verification:shadow-report', ['--since' => '2026-02-30']));
-    }
-
-    public function test_the_shadow_report_refuses_a_link_outside_one_to_sixty_minutes(): void
-    {
-        $this->assertSame(1, Artisan::call('transaction-verification:shadow-report', ['--minutes' => 61]));
-        $this->assertStringContainsString('1-60', Artisan::output());
     }
 
     public function test_each_read_logs_where_its_time_went_and_nothing_it_read(): void
@@ -385,14 +164,14 @@ class RerunAndFileTest extends TestCase
 
         $this->assertCount(2, $logged);
         // Exactly these keys, so receipt text can never ride along.
-        $this->assertSame(['id', 'engine', 'download_ms', 'first_ms', 'second_ms', 'passes', 'total_ms'], array_keys($logged[0]));
+        $this->assertSame(['id', 'engine', 'first_ms', 'second_ms', 'passes', 'total_ms'], array_keys($logged[0]));
         // Not Tesseract, so no passes.
         $this->assertNull($logged[0]['passes']);
         $this->assertSame(['recorded+rapidocr', 'recorded'], array_column($logged, 'engine'));
         $this->assertIsInt($logged[0]['second_ms']);
         $this->assertNull($logged[1]['second_ms']);
         foreach ($logged as $context) {
-            array_map($this->assertIsInt(...), [$context['id'], $context['download_ms'], $context['first_ms'], $context['total_ms']]);
+            array_map($this->assertIsInt(...), [$context['id'], $context['first_ms'], $context['total_ms']]);
         }
     }
 

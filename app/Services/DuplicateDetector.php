@@ -16,7 +16,7 @@ class DuplicateDetector
     /** @return list<array{id: int, uuid: string, method: string}> */
     public function find(TransactionVerification $row, ?string $referenceHash): array
     {
-        // Earlier rows only: the original receipt never becomes the duplicate, whatever the queue order.
+        // Earlier rows only: the original receipt never becomes the duplicate, whatever order the checks finish in.
         $others = $this->otherSubjects($row)->where('id', '<', $row->id);
 
         $hits = [];
@@ -56,17 +56,6 @@ class DuplicateDetector
             ->whereNotIn('id', TransactionVerificationDuplicate::where('duplicate_of_id', $row->id)->select('verification_id'))
             ->pluck('id')
             ->all();
-    }
-
-    /**
-     * Rows once flagged as copies of this row by its reference: decided again when a rerun changes that reference.
-     *
-     * @return list<int>
-     */
-    public function copiesByReference(TransactionVerification $row): array
-    {
-        return TransactionVerificationDuplicate::where('duplicate_of_id', $row->id)->where('method', 'reference')
-            ->pluck('verification_id')->unique()->values()->all();
     }
 
     private function otherSubjects(TransactionVerification $row): Builder

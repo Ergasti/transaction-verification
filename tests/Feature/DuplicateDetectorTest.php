@@ -57,7 +57,7 @@ class DuplicateDetectorTest extends TestCase
         $original = $this->row('affiliate_payout', 1, sha: 'aaa');
         $this->row('affiliate_payout', 2, sha: 'aaa');
 
-        // The original's job ran after the copy was inserted (queue backlog).
+        // The original was checked after the copy was inserted (two requests at once).
         $this->assertSame([], (new DuplicateDetector)->find($original, null));
     }
 
@@ -98,8 +98,6 @@ class DuplicateDetectorTest extends TestCase
             'currency' => 'EGP',
             'expected_destination' => ['type' => 'phone', 'value' => '01000000001'],
             'expected_destination_hash' => str_repeat('0', 64),
-            'file_disk' => 'hetzner',
-            'file_path' => 'transaction-verifications/x.png',
             'file_mime' => 'image/png',
             'file_size' => 1,
             'file_sha256' => $sha,

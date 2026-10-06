@@ -34,7 +34,7 @@ class OpenApiRouteCoverageTest extends TestCase
         }
 
         // Not vacuous: a prefix typo would match nothing and pass.
-        $this->assertCount(5, $routes);
+        $this->assertCount(3, $routes);
         $this->assertSame([], array_values(array_diff($routes, $documented)), 'Routes missing from '.self::SPEC.': re-export it from the host app (openapi:export).');
     }
 

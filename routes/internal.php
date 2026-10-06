@@ -10,7 +10,7 @@ use Modules\TransactionVerification\Http\Middleware\VerifyServiceCaller;
 // Per caller key, verified by then (the module provider puts the signature check ahead of the throttles): unlike the
 // IP, it can't be spoofed through X-Forwarded-For, and two callers behind one address don't share a budget.
 RateLimiter::for('transaction-verification-internal', fn (Request $r) => Limit::perMinute(600)->by('tv-int:'.$r->header('X-Service-Key-Id')));
-// Each write costs an OCR run (~5-7 s on the sidecar), and a burst queues behind it.
+// Each write runs a whole check in the request (~1-3 s), one at a time on the sidecar.
 RateLimiter::for('transaction-verification-internal-write', fn (Request $r) => Limit::perMinute(30)->by('tv-wr:'.$r->header('X-Service-Key-Id')));
 
 Route::prefix('api/internal/transaction-verification/v1')
@@ -20,6 +20,4 @@ Route::prefix('api/internal/transaction-verification/v1')
         Route::post('verifications', [VerificationController::class, 'store'])->middleware('throttle:transaction-verification-internal-write')->name('verifications.store');
         Route::get('verifications', [VerificationController::class, 'index'])->name('verifications.index');
         Route::get('verifications/{uuid}', [VerificationController::class, 'show'])->whereUuid('uuid')->name('verifications.show');
-        Route::post('verifications/{uuid}/reprocess', [VerificationController::class, 'reprocess'])->whereUuid('uuid')->middleware('throttle:transaction-verification-internal-write')->name('verifications.reprocess');
-        Route::get('verifications/{uuid}/file', [VerificationController::class, 'file'])->whereUuid('uuid')->name('verifications.file');
     });

@@ -53,10 +53,7 @@ class TransactionVerificationServiceProvider extends ServiceProvider
         if (method_exists($kernel, 'addToMiddlewarePriorityBefore')) {
             $kernel->addToMiddlewarePriorityBefore([ThrottleRequests::class, ThrottleRequestsWithRedis::class], VerifyServiceCaller::class);
         }
-        $this->commands([
-            \Modules\TransactionVerification\Console\ReprocessVerificationsCommand::class,
-            \Modules\TransactionVerification\Console\ShadowReportCommand::class,
-        ]);
+        $this->commands([\Modules\TransactionVerification\Console\ShadowReportCommand::class]);
 
         // 429s and the router's own 404/405 (a malformed uuid, a wrong method) in the API's JSON envelope too.
         $handler = $this->app->make(ExceptionHandler::class);
@@ -72,9 +69,9 @@ class TransactionVerificationServiceProvider extends ServiceProvider
                 : null);
         }
 
-        // Recovers rows whose queue push was lost or whose worker died mid-run.
+        // Marks checks that died mid-way failed, so a person looks at them.
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule) {
-            $schedule->call(fn () => $this->app->make(TransactionVerificationService::class)->recoverStale())
+            $schedule->call(fn () => $this->app->make(TransactionVerificationService::class)->failStale())
                 ->everyFiveMinutes()->name('transaction-verification-recover')->onOneServer()->withoutOverlapping(10);
         });
     }

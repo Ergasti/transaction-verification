@@ -45,9 +45,9 @@ class ModuleBootTest extends TestCase
         $this->assertStringContainsString("env('TRANSACTION_VERIFICATION_API_ENABLED', false)", $file);
         // Callers submit no receipt until someone switches it on (shadow mode first).
         $this->assertStringContainsString("env('TRANSACTION_VERIFICATION_ENABLED', false)", $file);
-        // Nothing host-specific: the app's default connection and its private 'local' disk unless set.
+        // Nothing host-specific: the app's default connection unless set. No disk: receipts are never stored.
         $this->assertStringContainsString("env('TRANSACTION_VERIFICATION_DB_CONNECTION')", $file);
-        $this->assertStringContainsString("env('TRANSACTION_VERIFICATION_DISK', 'local')", $file);
+        $this->assertStringNotContainsString('TRANSACTION_VERIFICATION_DISK', $file);
     }
 
     public function test_the_parser_follows_config(): void
@@ -84,9 +84,7 @@ class ModuleBootTest extends TestCase
     {
         // Keys and types only: a developer .env may override the values.
         $this->assertIsFloat(config('transaction-verification.confidence_threshold'));
-        $this->assertNotEmpty(config('transaction-verification.folder'));
-        $this->assertNotEmpty(config('transaction-verification.disk'));
-        $this->assertNotEmpty(config('transaction-verification.queue'));
+        $this->assertNull(config('transaction-verification.disk'), 'receipts are never stored');
         $this->assertNotEmpty(config('transaction-verification.engine'));
         $this->assertNotEmpty(config('transaction-verification.tesseract.passes'));
         // Not env-overridable: a decimal point lost at one size must be checked at another.

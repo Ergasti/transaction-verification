@@ -3,12 +3,9 @@
 namespace Modules\TransactionVerification\Http\Controllers\Internal;
 
 use Dedoc\Scramble\Attributes\BodyParameter;
-use Dedoc\Scramble\Attributes\Header;
-use Dedoc\Scramble\Attributes\IgnoreResponse;
 use Dedoc\Scramble\Attributes\QueryParameter;
 use Dedoc\Scramble\Attributes\Response as ResponseDoc;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Validation\ValidationException;
@@ -34,8 +31,8 @@ class VerificationController
 
     public function __construct(private readonly TransactionVerificationService $verifier) {}
 
-    /** Submit a receipt. The file travels base64-encoded inside the JSON, so the signature covers it. */
-    #[ResponseDoc(status: 202, type: self::ONE, description: 'Accepted and queued (or the verification already made with this idempotency key).')]
+    /** Check a receipt now. The file travels base64-encoded inside the JSON, so the signature covers it; it is never stored. */
+    #[ResponseDoc(status: 200, type: self::ONE, description: 'Checked: the verdict (or the verification already made with this idempotency key).')]
     #[ResponseDoc(status: 401, type: self::ERR, description: 'Missing, wrong, expired or reused signature.')]
     #[ResponseDoc(status: 403, type: self::ERR, description: 'Caller IP not allowed.')]
     #[ResponseDoc(status: 415, type: self::ERR, description: 'The body is not JSON (error: json_required).')]
@@ -113,7 +110,7 @@ class VerificationController
             @unlink($tmp);
         }
 
-        return response()->json(['success' => true, 'data' => $this->present($result)], 202);
+        return response()->json(['success' => true, 'data' => $this->present($result)]);
     }
 
     /** A subject's verifications, newest first. */
@@ -158,36 +155,6 @@ class VerificationController
         return $result ? response()->json(['success' => true, 'data' => $this->present($result)]) : $this->notFound();
     }
 
-    /** Read the receipt again with the current engines and decide again. */
-    #[ResponseDoc(status: 202, type: self::ONE, description: 'Queued again; a receipt still waiting or being read is returned as it is.')]
-    #[ResponseDoc(status: 401, type: self::ERR, description: 'Missing, wrong, expired or reused signature.')]
-    #[ResponseDoc(status: 403, type: self::ERR, description: 'Caller IP not allowed.')]
-    #[ResponseDoc(status: 404, type: self::ERR, description: 'No verification with this uuid.')]
-    #[ResponseDoc(status: 429, type: self::ERR, description: 'More than 30 writes a minute.')]
-    #[ResponseDoc(status: 503, type: self::ERR, description: 'The API is switched off.')]
-    public function reprocess(string $uuid): JsonResponse
-    {
-        $result = $this->verifier->reprocess($uuid);
-
-        return $result ? response()->json(['success' => true, 'data' => $this->present($result)], 202) : $this->notFound();
-    }
-
-    /** A redirect to a link to the receipt image that expires in 5 minutes. */
-    #[ResponseDoc(status: 302, mediaType: 'text/html', type: 'string', description: 'A redirect to the link to the receipt.')]
-    #[Header(name: 'Location', description: 'The link to the receipt, valid for 5 minutes.', type: 'string', required: true, status: 302)]
-    #[IgnoreResponse(200)]
-    #[ResponseDoc(status: 401, type: self::ERR, description: 'Missing, wrong, expired or reused signature.')]
-    #[ResponseDoc(status: 403, type: self::ERR, description: 'Caller IP not allowed.')]
-    #[ResponseDoc(status: 404, type: self::ERR, description: 'No verification with this uuid.')]
-    #[ResponseDoc(status: 429, type: self::ERR, description: 'More than 600 reads a minute.')]
-    #[ResponseDoc(status: 503, type: self::ERR, description: 'The API is switched off.')]
-    public function file(string $uuid): JsonResponse|RedirectResponse
-    {
-        $url = $this->verifier->temporaryFileUrl($uuid);
-
-        return $url ? redirect()->away($url) : $this->notFound();
-    }
-
     private function invalid(string $error, string $message): JsonResponse
     {
         return response()->json(['success' => false, 'error' => $error, 'message' => $message], 422);
@@ -210,7 +177,7 @@ class VerificationController
             'duplicate_of' => $result->duplicateOf,
             'extracted' => (object) $result->extracted,
             // The stored error can quote any exception (SQL included); the detail stays in the row.
-            'error' => $result->error === null ? null : 'The receipt could not be read. Reprocess it or check it by hand.',
+            'error' => $result->error === null ? null : 'The receipt could not be read. Check it by hand.',
         ];
     }
 }

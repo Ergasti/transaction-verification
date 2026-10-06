@@ -5,7 +5,8 @@ the caller expected: the amount, where the money went, and whether the same rece
 payout. It **warns, it never blocks**: a verdict is advice for a person, and anything unsure goes to review.
 
 Two OCR engines read every receipt (Tesseract in the app's image, RapidOCR in a small container), and a deciding
-field counts only when both read it the same.
+field counts only when both read it the same. The receipt is read straight from the upload and **never stored**: only
+the verdict, the fields read (encrypted) and the fingerprints that catch a reused receipt are kept.
 
 A Laravel 12 package (PHP 8.3+). The namespace is `Modules\TransactionVerification`.
 
@@ -15,7 +16,7 @@ A Laravel 12 package (PHP 8.3+). The namespace is `Modules\TransactionVerificati
 
 ```json
 "repositories": [{"type": "vcs", "url": "https://github.com/Ergasti/transaction-verification"}],
-"require": {"ergasti/transaction-verification": "^0.1"}
+"require": {"ergasti/transaction-verification": "^0.2"}
 ```
 
 ```bash
@@ -28,48 +29,23 @@ Laravel finds the service provider by itself.
 
 **2. Settings** (`.env`):
 
-The package doesn't choose where receipts go: it stores the screenshots on the Laravel disk you name and its two
-tables on the connection you name. You define both in your app (`config/filesystems.php`, `config/database.php`), so
-it works the same with S3, Hetzner, a local folder or any database.
+The package keeps its two tables on the database connection you name (defined in your app's
+`config/database.php`), so it works with any database. It needs no disk or bucket: the receipt is never stored.
 
 | Variable | Default | Set it to |
 |---|---|---|
-| `TRANSACTION_VERIFICATION_DISK` | `local` | A **private** disk for the screenshots. Production: an S3-style disk with timeouts (below) |
 | `TRANSACTION_VERIFICATION_DB_CONNECTION` | the app's default | Another connection, if the tables live elsewhere |
 | `TRANSACTION_VERIFICATION_HMAC_KEY` | `APP_KEY` | A long random secret. It keys the blind index of receipt numbers and destinations: **never change it** once rows exist, or duplicates stop being found |
 | `TRANSACTION_VERIFICATION_RAPIDOCR_URL` | `http://ocr_rapid:8080` | Where the RapidOCR container answers |
-| `TRANSACTION_VERIFICATION_QUEUE` | `default` | A queue of its own in production (e.g. `ocr`) |
 | `TRANSACTION_VERIFICATION_ENABLED` | `false` | Only read by callers that check it (a switch for your own submit code) |
 
-A disk with timeouts, so a stuck upload gives up instead of holding a worker (`config/filesystems.php`):
-
-```php
-'receipts' => [
-    'driver' => 's3',
-    'key' => env('RECEIPTS_S3_KEY'),
-    'secret' => env('RECEIPTS_S3_SECRET'),
-    'region' => env('RECEIPTS_S3_REGION'),
-    'bucket' => env('RECEIPTS_S3_BUCKET'),
-    'endpoint' => env('RECEIPTS_S3_ENDPOINT'),
-    'use_path_style_endpoint' => true,
-    'throw' => true,
-    'report' => false,
-    'http' => ['connect_timeout' => 5, 'timeout' => 20],
-    'retries' => 1,
-],
-```
-
-Create the bucket with public access **off**: the package reads files through the disk, never by public link. Put the
-`RECEIPTS_S3_*` values in `.env`.
-
-**3. Pin your storage in code** (recommended, so a missing `.env` line can't send receipts to the wrong place).
+**3. Pin your connection in code** (recommended, so a missing `.env` line can't put the tables in the wrong database).
 Create `config/transaction-verification.php` with only what you change; everything else keeps the package's defaults:
 
 ```php
 <?php
 
 return [
-    'disk' => env('TRANSACTION_VERIFICATION_DISK', 'receipts'),
     'connection' => env('TRANSACTION_VERIFICATION_DB_CONNECTION', 'mysql'),
 ];
 ```
@@ -79,13 +55,17 @@ defaults in later versions.)
 
 **4. Create the tables:** `php artisan migrate` (two tables, on the connection set above).
 
+**Call it after the response.** `submit()` checks the receipt there and then (~1-3 s), so in a web request call it
+once the response is sent, e.g. inside `app()->terminating(...)`: the user never waits, and the upload is still on
+disk until the request ends.
+
 **5. OCR.**
 - Tesseract and Poppler in the app's image: `apt-get install tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng poppler-utils`.
 - RapidOCR as a compose service, from the image the package publishes with each release:
 
 ```yaml
 ocr_rapid:
-  image: ghcr.io/ergasti/transaction-verification-ocr:0.1.1   # the same version as the package
+  image: ghcr.io/ergasti/transaction-verification-ocr:0.2.0   # the same version as the package
   restart: always
   mem_limit: 2g
   cpus: 4
@@ -124,10 +104,10 @@ The image is private, so GitHub hands it only to a logged-in server. Do this **o
 - **Rotating the token:** make a new one, run the same `docker login` with it, then revoke the old one. Nothing else
   changes.
 
-**6. Keep running:** the scheduler (it recovers rows whose queue job was lost, every 5 minutes) and a queue worker on
-`TRANSACTION_VERIFICATION_QUEUE`.
+**6. Keep running:** the scheduler. Every 5 minutes it marks `failed` a check that died mid-way (a crash or the time
+limit), so a person looks at that receipt. No queue worker is needed.
 
-Without Tesseract (a laptop), set `TRANSACTION_VERIFICATION_ENGINE=null`: receipts are still stored, and without the
+Without Tesseract (a laptop), set `TRANSACTION_VERIFICATION_ENGINE=null`: receipts still get a row, and without the
 RapidOCR container they come back `unreadable`.
 
 ## Verdicts
@@ -144,8 +124,9 @@ The first rule that applies wins:
 
 None of them blocks anything: `unreadable`, `mismatch` and `needs_review` all mean "a person should look".
 
-`status` is `pending` → `processing` → `completed` (or `failed`). A verdict exists only once `completed`.
-The latest result is the current one: a result can change after a re-run, or when a copy of the receipt turns up.
+`submit()` returns the finished result: `completed` with a verdict, or `failed` (unreadable file, an engine error) for
+a person to check. `processing` shows only while a check runs. The latest result is the current one: a result can
+change when a copy of the receipt turns up.
 
 ## From PHP
 
@@ -154,17 +135,15 @@ binding, so check `app()->bound(...)` and skip quietly.
 
 | Method | Does |
 |---|---|
-| `submit(VerificationRequest)` | Stores the file, queues the reading. Idempotent on `idempotencyKey`. |
+| `submit(VerificationRequest)` | Checks the receipt now and returns the result. Idempotent on `idempotencyKey`. Throws only if its row can't be created |
 | `find(uuid)` / `latestFor(subjectType, subjectId)` | The result, or null |
-| `reprocess(uuid)` | Reads a finished receipt again with the current engines; null for an unknown uuid |
-| `temporaryFileUrl(uuid, minutes = 5)` | A link to the receipt that expires after 1–60 minutes; null for an unknown uuid |
 
 A result's `extracted` holds what was read, masked: phone `********001`, account `****0010`, handle `so***@instapay`.
 
-`TransactionVerificationCompleted` (uuid, subject, verdict, checks; never a phone) fires each time a reading stores
-a verdict, and again for another subject's receipt whose result changes because its original was read or re-read
-(it became, or stopped being, a `duplicate`). A copy whose result didn't change isn't announced again. Treat the
-latest event as current.
+`TransactionVerificationCompleted` (uuid, subject, verdict, checks; never a phone) fires each time a check stores
+a verdict, and again for another subject's receipt that becomes a `duplicate` because its original was checked later.
+Events are notifications: before acting on one, read the current result with `find(uuid)` (two checks running at once
+can, rarely, deliver an older verdict last).
 
 ## Example caller: payouts
 
@@ -184,14 +163,12 @@ Base path `/api/internal/transaction-verification/v1`. The full contract, with e
 
 | Method | Path | Does |
 |---|---|---|
-| POST | `/verifications` | Submit a receipt → `202` |
+| POST | `/verifications` | Check a receipt → `200` with the result (never stored) |
 | GET | `/verifications?subject_type=&subject_id=` | A subject's verifications, newest first (`page`, `per_page` ≤ 100) |
 | GET | `/verifications/{uuid}` | One verification |
-| POST | `/verifications/{uuid}/reprocess` | Read it again → `202` |
-| GET | `/verifications/{uuid}/file` | `302` to a link to the receipt that expires in 5 minutes |
 
 Every answer is `{"success": true, "data": …}` or `{"success": false, "error": "<code>", "message": "…"}`,
-including a wrong path (`not_found`) or method (`method_not_allowed`); the one exception is the `302` of `/file`.
+including a wrong path (`not_found`) or method (`method_not_allowed`).
 Each caller key may make 30 writes and 600 reads a minute. A failed reading's `error` is a fixed message;
 the detail stays on the server.
 
@@ -312,22 +289,18 @@ in [Signing](#signing).
 
 ## Operations
 
-- Re-read receipts after an engine upgrade: `php artisan transaction-verification:reprocess {uuid} {uuid}…`
 - **Shadow mode** (before anyone relies on a verdict): switch your caller on, let about two weeks of receipts
   through, then run
   `php artisan transaction-verification:shadow-report --since=YYYY-MM-DD > shadow.csv`. Each line has the verdict,
-  each check's outcome (`pass` / `fail` / `missing` / `not_applicable`), a receipt link (60 minutes by default,
-  `--minutes=1..60`) and an empty `label` column. Open each receipt, compare it with what was paid (by `subject_id`),
-  and note in `label` which outcomes were wrong (e.g. `amount wrong`), never the values themselves. A field counts
-  right when its outcome was right. The gate is 98% on at least 50 receipts. The CSV holds no phones, accounts or
-  amounts, but its links open the receipts: treat it as private and delete it after labelling. `--since` takes
+  each check's outcome (`pass` / `fail` / `missing` / `not_applicable`) and an empty `label` column. Open each receipt
+  where your app keeps it (the package doesn't), compare it with what was paid (by `subject_id`), and note in `label`
+  which outcomes were wrong (e.g. `amount wrong`), never the values themselves. A field counts right when its outcome
+  was right. The gate is 98% on at least 50 receipts. The CSV holds no phones, accounts or amounts. `--since` takes
   `YYYY-MM-DD` only.
 - **The spec** in `openapi/` is generated by Scramble (`dedoc/scramble`) from the controller's attributes in a host
   app. Re-export it after changing the API; `OpenApiRouteCoverageTest` fails when a route is missing from it.
-- **Speed:** each stored scan logs `transaction-verification.timing`: milliseconds per step, and `passes` (2 when
+- **Speed:** each check logs `transaction-verification.timing`: milliseconds per step, and `passes` (2 when
   Tesseract stopped early because both engines agreed, 4 when it read them all). Numbers only, no receipt data.
-- **Own queue (production):** set `TRANSACTION_VERIFICATION_QUEUE=ocr` and run a worker for it
-  (`php artisan queue:work --queue=ocr`). Deploy the worker first, then set it.
 - **Other receipts:** `transaction-verification.parser` takes any `ReceiptParser` class.
 
 ## Developing

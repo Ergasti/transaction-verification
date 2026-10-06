@@ -4,11 +4,6 @@ return [
     // For callers (e.g. a payout flow): submit receipts only when on. Off by default.
     'enabled' => filter_var(env('TRANSACTION_VERIFICATION_ENABLED', false), FILTER_VALIDATE_BOOL),
 
-    // Private disk for the receipt screenshots. 'local' is private in a stock Laravel app; production wants its own
-    // S3-style disk with timeouts (see README).
-    'disk' => env('TRANSACTION_VERIFICATION_DISK', 'local'),
-    'folder' => env('TRANSACTION_VERIFICATION_FOLDER', 'transaction-verifications'),
-
     // A deciding field read below this confidence turns a match, or a failed check on it, into needs_review. Confidence is the share of the
     // Tesseract passes that read the field and agree (a pass that read nothing doesn't count), so at 0.90 no pass that
     // read it may disagree; on 'always' the second engine must also read it the same, or it drops to 0.
@@ -16,8 +11,6 @@ return [
 
     // Blind-index key; falls back to APP_KEY. Changing it orphans every stored hash.
     'hmac_key' => env('TRANSACTION_VERIFICATION_HMAC_KEY'),
-
-    'queue' => env('TRANSACTION_VERIFICATION_QUEUE', 'default'),
 
     // Database connection for the receipt tables; unset = the app's default connection.
     'connection' => env('TRANSACTION_VERIFICATION_DB_CONNECTION'),
@@ -36,7 +29,8 @@ return [
         // [scale, threshold] per pass, measured on the fixtures (plan §3). The 1.5x pass sees the glyphs at
         // another size, so a dot every 2x pass loses ("1.50" as "150") splits the vote instead of passing.
         'passes' => [[2, 0.75], [2, 0.80], [2, 0.85], [1.5, 0.80]],
-        // Seconds per pass (~1 s normally; one took over 12 s on a loaded box). Four passes stay far under stale_minutes.
+        // Seconds per pass (~1 s normally; one took over 12 s on a loaded box). The check runs inside the caller's
+        // request, whose time limit still counts after the response: two rounds of passes plus RapidOCR fit easily.
         'timeout' => 15,
         // Passes read side by side, each on one core: 4 reads a receipt in about one pass's time. 1 = one after another.
         'parallel' => (int) env('TRANSACTION_VERIFICATION_TESSERACT_PARALLEL', 4),
@@ -55,14 +49,15 @@ return [
     'second_engine' => [
         'mode' => env('TRANSACTION_VERIFICATION_SECOND_ENGINE', 'always'),
         'url' => env('TRANSACTION_VERIFICATION_RAPIDOCR_URL', 'http://ocr_rapid:8080'),
-        // Seconds: ~0.4 s per receipt on its 4 cores (anything bigger is read at 1600 px), one at a time, so a burst queues up behind it.
-        'timeout' => 60,
+        // Seconds: ~0.4 s per receipt on its 4 cores (anything bigger is read at 1600 px), one at a time. Short, so a hung
+        // sidecar frees the caller's PHP worker soon.
+        'timeout' => 20,
     ],
 
-    // Largest receipt the job will read into memory (bytes). Phone screenshots are well under 5 MB.
+    // Largest receipt a check will read (bytes). Phone screenshots are well under 5 MB.
     'max_file_bytes' => (int) env('TRANSACTION_VERIFICATION_MAX_FILE_BYTES', 10 * 1024 * 1024),
 
-    // A pending or processing row untouched this long is re-queued. Must exceed the job's longest run.
+    // A check untouched this long died mid-way (crash, time limit) and is marked failed. Must exceed the longest check.
     'stale_minutes' => (int) env('TRANSACTION_VERIFICATION_STALE_MINUTES', 15),
 
     // Service-to-service API (routes/internal.php). Off until a caller exists and its secret is set.

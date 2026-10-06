@@ -5,9 +5,8 @@ namespace Modules\TransactionVerification\Tests\Feature;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Queue;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Modules\TransactionVerification\Contracts\OcrEngine;
@@ -16,6 +15,7 @@ use Modules\TransactionVerification\Data\ExpectedDestination;
 use Modules\TransactionVerification\Data\VerificationRequest;
 use Modules\TransactionVerification\Data\VerificationResult;
 use Modules\TransactionVerification\Http\Middleware\VerifyServiceCaller;
+use Modules\TransactionVerification\Models\TransactionVerification;
 use Spectator\Spectator;
 use Modules\TransactionVerification\Tests\TestCase;
 
@@ -35,15 +35,12 @@ class InternalApiTest extends TestCase
         parent::setUp();
 
         config([
-            'transaction-verification.disk' => 'hetzner',
-            'transaction-verification.folder' => 'transaction-verifications',
             'transaction-verification.engine' => 'null',
             'transaction-verification.second_engine.mode' => 'off',
             'transaction-verification.confidence_threshold' => 0.90,
             'transaction-verification.api.enabled' => true,
             'transaction-verification.api.consumers' => ['caller' => ['secrets' => [self::SECRET], 'allowed_ips' => []]],
         ]);
-        Storage::fake('hetzner');
         Http::preventStrayRequests();
     }
 
@@ -70,13 +67,12 @@ class InternalApiTest extends TestCase
 
         $response = $this->signed('POST', self::PREFIX.'/verifications', json_encode($this->submission()));
 
-        $response->assertStatus(202)
+        $response->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.subject_type', 'affiliate_payout')
             ->assertJsonPath('data.subject_id', '7')
             ->assertJsonPath('data.verdict', 'match');
         $this->assertSame($response->json('data.uuid'), app(TransactionVerifier::class)->latestFor('affiliate_payout', 7)?->uuid);
-        $this->assertCount(1, Storage::disk('hetzner')->allFiles('transaction-verifications'));
     }
 
     public function test_the_same_idempotency_key_returns_the_same_verification(): void
@@ -85,10 +81,10 @@ class InternalApiTest extends TestCase
         $second = $this->signed('POST', self::PREFIX.'/verifications', json_encode($this->submission()))->json('data.uuid');
 
         $this->assertSame($first, $second);
-        $this->assertCount(1, Storage::disk('hetzner')->allFiles('transaction-verifications'));
+        $this->assertSame(1, TransactionVerification::count());
     }
 
-    public function test_a_bad_submission_is_refused_with_its_reason_and_nothing_is_stored(): void
+    public function test_a_bad_submission_is_refused_with_its_reason_and_nothing_is_recorded(): void
     {
         config(['transaction-verification.max_file_bytes' => 5000]);
 
@@ -110,7 +106,7 @@ class InternalApiTest extends TestCase
         $this->signed('POST', self::PREFIX.'/verifications', json_encode($unknownType))
             ->assertStatus(422)->assertJson(['error' => 'validation']);
 
-        $this->assertSame([], Storage::disk('hetzner')->allFiles());
+        $this->assertSame(0, TransactionVerification::count());
     }
 
     public function test_a_caller_lists_a_subjects_verifications_newest_first(): void
@@ -131,27 +127,6 @@ class InternalApiTest extends TestCase
             ->assertStatus(422)->assertJson(['error' => 'validation']);
     }
 
-    public function test_a_caller_reruns_a_verification(): void
-    {
-        $this->reading(self::RECEIPT);
-        $uuid = $this->submitted()->uuid;
-        $this->reading(str_replace('3,070', '3,080', self::RECEIPT));
-
-        $this->signed('POST', self::PREFIX."/verifications/{$uuid}/reprocess")
-            ->assertStatus(202)->assertJsonPath('data.uuid', $uuid)->assertJsonPath('data.verdict', 'mismatch');
-    }
-
-    public function test_a_caller_is_redirected_to_a_link_to_the_receipt(): void
-    {
-        $uuid = $this->submitted()->uuid;
-
-        $response = $this->signed('GET', self::PREFIX."/verifications/{$uuid}/file");
-
-        $response->assertRedirect();
-        $this->assertStringContainsString("transaction-verifications/{$uuid}.png", $response->headers->get('Location'));
-        $this->assertStringContainsString('expiration=', $response->headers->get('Location'));
-    }
-
     public function test_every_answer_matches_the_committed_spec(): void
     {
         Spectator::using('transaction-verification-internal.yaml');
@@ -160,16 +135,14 @@ class InternalApiTest extends TestCase
         $this->reading(self::RECEIPT);
 
         $done = $this->signed('POST', self::PREFIX.'/verifications', json_encode($this->submission()));
-        $done->assertValidRequest()->assertValidResponse(202);
+        $done->assertValidRequest()->assertValidResponse(200);
         $uuid = $done->json('data.uuid');
 
         $this->signed('GET', self::PREFIX."/verifications/{$uuid}")->assertValidResponse(200);
         $this->signed('GET', self::PREFIX.'/verifications?subject_type=affiliate_payout&subject_id=7')->assertValidResponse(200);
-        $this->signed('POST', self::PREFIX."/verifications/{$uuid}/reprocess")->assertValidResponse(202);
         $this->signed('GET', self::PREFIX.'/verifications/'.Str::uuid())->assertValidResponse(404);
         $this->signed('POST', self::PREFIX.'/verifications', json_encode($this->submission(['file_base64' => 'not base64!!'])))->assertValidResponse(422);
         $this->getJson(self::PREFIX."/verifications/{$uuid}")->assertValidResponse(401);
-        $this->signed('GET', self::PREFIX."/verifications/{$uuid}/file")->assertValidResponse(302);
 
         // The middleware's answers are documented on every operation, reads included.
         config(['transaction-verification.api.consumers.caller.allowed_ips' => ['10.0.0.9']]);
@@ -178,49 +151,57 @@ class InternalApiTest extends TestCase
         $this->signed('GET', self::PREFIX.'/verifications?subject_type=affiliate_payout&subject_id=7')->assertValidResponse(503);
         config(['transaction-verification.api.enabled' => true, 'transaction-verification.api.consumers.caller.allowed_ips' => []]);
 
-        // Still waiting to be read: checks and what was read are empty, and must still be objects.
-        Queue::fake();
-        $waiting = $this->signed('POST', self::PREFIX.'/verifications', json_encode($this->submission(['idempotency_key' => 'waiting'])));
-        $waiting->assertValidResponse(202)->assertJsonPath('data.status', 'pending');
-        $this->assertStringContainsString('"checks":{}', $waiting->getContent());
+        // Failed: checks and what was read are empty, and must still be objects. (The route keeps its controller, and
+        // with it the engine, between requests here; a DB blip on the verdict write fails the check instead.)
+        $blipped = false;
+        DB::connection(config('transaction-verification.connection'))->beforeExecuting(function (string $sql) use (&$blipped) {
+            if (! $blipped && str_contains($sql, '"verdict"')) {
+                $blipped = true;
+                throw new \RuntimeException('connection blip');
+            }
+        });
+        $failed = $this->signed('POST', self::PREFIX.'/verifications', json_encode($this->submission(['idempotency_key' => 'failed'])));
+        $failed->assertValidResponse(200)->assertJsonPath('data.status', 'failed');
+        $this->assertStringContainsString('"checks":{}', $failed->getContent());
     }
 
     public function test_writes_are_limited_to_thirty_a_minute(): void
     {
-        $url = self::PREFIX.'/verifications/'.Str::uuid().'/reprocess';
+        // An empty body: refused by the controller, after the throttle has counted it.
+        $url = self::PREFIX.'/verifications';
 
         for ($i = 0; $i < 30; $i++) {
-            $this->signed('POST', $url)->assertNotFound();
+            $this->signed('POST', $url, '{}')->assertStatus(422);
         }
 
-        $this->signed('POST', $url)->assertStatus(429)->assertJson(['success' => false, 'error' => 'rate_limited']);
+        $this->signed('POST', $url, '{}')->assertStatus(429)->assertJson(['success' => false, 'error' => 'rate_limited']);
         // Reads have their own, larger budget.
         $this->signed('GET', self::PREFIX.'/verifications/'.Str::uuid())->assertNotFound();
     }
 
     public function test_unsigned_requests_under_a_callers_key_id_cannot_use_up_its_budget(): void
     {
-        $url = self::PREFIX.'/verifications/'.Str::uuid().'/reprocess';
+        $url = self::PREFIX.'/verifications';
 
         // The key id is public (the README's default): only a signed request may count against it.
         for ($i = 0; $i < 31; $i++) {
-            $this->signed('POST', $url, secret: 'not_the_secret')->assertStatus(401);
+            $this->signed('POST', $url, '{}', secret: 'not_the_secret')->assertStatus(401);
         }
 
-        $this->signed('POST', $url)->assertNotFound();
+        $this->signed('POST', $url, '{}')->assertStatus(422);
     }
 
     public function test_each_caller_key_has_its_own_budget_even_from_one_address(): void
     {
         config(['transaction-verification.api.consumers.other' => ['secrets' => ['other_secret'], 'allowed_ips' => []]]);
-        $url = self::PREFIX.'/verifications/'.Str::uuid().'/reprocess';
+        $url = self::PREFIX.'/verifications';
 
         for ($i = 0; $i < 30; $i++) {
-            $this->signed('POST', $url);
+            $this->signed('POST', $url, '{}');
         }
 
-        $this->signed('POST', $url)->assertStatus(429);
-        $this->signed('POST', $url, headers: ['X-Service-Key-Id' => 'other'], secret: 'other_secret')->assertNotFound();
+        $this->signed('POST', $url, '{}')->assertStatus(429);
+        $this->signed('POST', $url, '{}', headers: ['X-Service-Key-Id' => 'other'], secret: 'other_secret')->assertStatus(422);
     }
 
     public function test_a_form_encoded_submit_is_refused_because_its_body_is_not_signed(): void
@@ -229,7 +210,7 @@ class InternalApiTest extends TestCase
         $this->signed('POST', self::PREFIX.'/verifications', form: $this->submission())
             ->assertStatus(415)->assertJson(['success' => false, 'error' => 'json_required']);
 
-        $this->assertSame([], Storage::disk('hetzner')->allFiles());
+        $this->assertSame(0, TransactionVerification::count());
     }
 
     public function test_a_negative_merchant_id_is_a_caller_mistake(): void
@@ -274,15 +255,19 @@ class InternalApiTest extends TestCase
         $response = $this->signed('GET', self::PREFIX."/verifications/{$uuid}");
 
         $response->assertOk()->assertJsonPath('data.status', 'failed')
-            ->assertJsonPath('data.error', 'The receipt could not be read. Reprocess it or check it by hand.');
+            ->assertJsonPath('data.error', 'The receipt could not be read. Check it by hand.');
         $this->assertStringNotContainsString('SQLSTATE', $response->getContent());
     }
 
     public function test_an_unknown_verification_is_404(): void
     {
-        foreach ([['GET', ''], ['POST', '/reprocess'], ['GET', '/file']] as [$method, $suffix]) {
+        $this->signed('GET', self::PREFIX.'/verifications/'.Str::uuid())
+            ->assertNotFound()->assertJson(['success' => false, 'error' => 'verification_not_found']);
+
+        // Gone in 0.2.0 with the stored receipt: answered like any unknown endpoint.
+        foreach ([['POST', '/reprocess'], ['GET', '/file']] as [$method, $suffix]) {
             $this->signed($method, self::PREFIX.'/verifications/'.Str::uuid().$suffix)
-                ->assertNotFound()->assertJson(['success' => false, 'error' => 'verification_not_found']);
+                ->assertNotFound()->assertJson(['success' => false, 'error' => 'not_found']);
         }
     }
 

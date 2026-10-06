@@ -17,10 +17,8 @@ class TransactionVerification extends Model
         'status' => VerificationStatusEnum::class,
         'verdict' => VerdictEnum::class,
         'attempts' => 'integer',
-        // Personal data: the recipient's phone/handle and everything read off the screenshot.
+        // Personal data: the recipient's phone/handle and the fields read off the screenshot.
         'expected_destination' => 'encrypted:array',
-        'ocr_text' => 'encrypted',
-        'second_ocr_text' => 'encrypted',
         'extracted' => 'encrypted:array',
         'checks' => 'array',
         'context' => 'array',
@@ -29,7 +27,7 @@ class TransactionVerification extends Model
     ];
 
     // Encrypted casts protect the column at rest, not toArray()/JSON output.
-    protected $hidden = ['expected_destination', 'ocr_text', 'second_ocr_text', 'extracted'];
+    protected $hidden = ['expected_destination', 'extracted'];
 
     // The property, not getConnectionName(): Eloquent also reads it directly. setConnection()/on() still win.
     public function __construct(array $attributes = [])

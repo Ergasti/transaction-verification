@@ -6,11 +6,11 @@ use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Foundation\Exceptions\Handler;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Modules\TransactionVerification\Contracts\OcrEngine;
@@ -28,7 +28,7 @@ use RuntimeException;
 use Modules\TransactionVerification\Tests\TestCase;
 use Throwable;
 
-/** Submit → job (sync queue) → verdict → event. Generated images only: the real receipts are not in git. */
+/** Submit → check in the same call → verdict → event. Generated images only: the real receipts are not in git. */
 class SubmitVerificationTest extends TestCase
 {
     use RefreshDatabase;
@@ -41,16 +41,13 @@ class SubmitVerificationTest extends TestCase
     {
         parent::setUp();
 
-        // A developer .env may point the disk at 'local' or the engine at 'tesseract'; tests pin both. The second
-        // engine is off except in the tests about it, which fake its HTTP answer.
+        // A developer .env may point the engine at 'tesseract'; tests pin it. The second engine is off except in the
+        // tests about it, which fake its HTTP answer.
         config([
-            'transaction-verification.disk' => 'hetzner',
-            'transaction-verification.folder' => 'transaction-verifications',
             'transaction-verification.engine' => 'null',
             'transaction-verification.second_engine.mode' => 'off',
             'transaction-verification.confidence_threshold' => 0.90,
         ]);
-        Storage::fake('hetzner');
         Http::preventStrayRequests();
     }
 
@@ -65,7 +62,6 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame(VerdictEnum::MATCH, $result->verdict);
         $this->assertSame('recorded+rapidocr', $row->engine);
         $this->assertSame('1 + rapidocr test', $row->engine_version);
-        $this->assertStringContainsString('01000000001', $row->second_ocr_text);
         Http::assertSent(fn ($request) => $request->url() === 'http://ocr.test/read' && $request->header('Content-Type') === ['image/png']);
     }
 
@@ -178,7 +174,6 @@ class SubmitVerificationTest extends TestCase
 
         $this->assertSame(VerificationStatusEnum::COMPLETED, $result->status);
         $this->assertSame(VerdictEnum::MATCH, $result->verdict);
-        Storage::disk('hetzner')->assertExists("transaction-verifications/{$result->uuid}.png");
         Event::assertDispatched(TransactionVerificationCompleted::class, fn ($e) => $e->uuid === $result->uuid && $e->verdict === 'match');
     }
 
@@ -191,7 +186,6 @@ class SubmitVerificationTest extends TestCase
 
         $this->assertSame($first->uuid, $second->uuid);
         $this->assertSame(1, TransactionVerification::count());
-        $this->assertCount(1, Storage::disk('hetzner')->allFiles('transaction-verifications'));
     }
 
     public function test_the_same_reference_on_another_payout_is_a_duplicate(): void
@@ -283,7 +277,7 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame(VerdictEnum::UNREADABLE, $result->verdict);
     }
 
-    public function test_a_concurrent_submit_with_the_same_key_returns_the_winner_and_deletes_its_own_file(): void
+    public function test_a_concurrent_submit_with_the_same_key_returns_the_winner(): void
     {
         // Another request inserts the same key between our idempotency check and our insert.
         $winner = null;
@@ -297,35 +291,9 @@ class SubmitVerificationTest extends TestCase
 
         $this->assertSame($winner->uuid, $result->uuid);
         $this->assertSame(1, TransactionVerification::count());
-        $this->assertCount(0, Storage::disk('hetzner')->allFiles('transaction-verifications'));
     }
 
-    public function test_an_upload_whose_reply_is_lost_deletes_what_landed_and_rethrows(): void
-    {
-        // The store keeps the object but the client times out waiting for the reply.
-        $fake = Storage::disk('hetzner');
-        Storage::set('hetzner', new class($fake->getDriver(), $fake->getAdapter(), $fake->getConfig()) extends \Illuminate\Filesystem\FilesystemAdapter
-        {
-            public function putFileAs($path, $file, $name = null, $options = [])
-            {
-                parent::putFileAs($path, $file, $name, $options);
-
-                throw new RuntimeException('timed out');
-            }
-        });
-
-        try {
-            $this->verifier()->submit($this->request(key: 'lost-reply'));
-            $this->fail('submit() should rethrow the upload failure.');
-        } catch (RuntimeException $e) {
-            $this->assertSame('timed out', $e->getMessage());
-        }
-
-        $this->assertCount(0, $fake->allFiles('transaction-verifications'));
-        $this->assertSame(0, TransactionVerification::count());
-    }
-
-    public function test_an_insert_failure_deletes_the_stored_receipt_and_rethrows(): void
+    public function test_an_insert_failure_rethrows_and_leaves_no_row(): void
     {
         // NAN can't be JSON-encoded, so the insert fails for a reason other than the unique key.
         $request = new VerificationRequest(
@@ -344,27 +312,10 @@ class SubmitVerificationTest extends TestCase
         } catch (\Illuminate\Database\Eloquent\JsonEncodingException) {
         }
 
-        $this->assertCount(0, Storage::disk('hetzner')->allFiles('transaction-verifications'));
         $this->assertSame(0, TransactionVerification::count());
     }
 
-    public function test_resubmitting_a_row_whose_job_was_lost_queues_it_again(): void
-    {
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE));
-        $realQueue = Queue::getFacadeRoot();
-        Queue::fake();
-        $stuck = $this->verifier()->submit($this->request(key: 'lost'));
-        $this->assertSame(VerificationStatusEnum::PENDING, $stuck->status);
-
-        // The queue comes back; the caller retries with the same key.
-        Queue::swap($realQueue);
-        $retried = $this->verifier()->submit($this->request(key: 'lost'));
-
-        $this->assertSame($stuck->uuid, $retried->uuid);
-        $this->assertSame(VerificationStatusEnum::COMPLETED, $this->verifier()->find($stuck->uuid)->status);
-    }
-
-    public function test_a_second_run_never_touches_a_completed_row(): void
+    public function test_resubmitting_a_checked_receipt_never_reads_it_again(): void
     {
         $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE));
         $result = $this->verifier()->submit($this->request());
@@ -386,12 +337,12 @@ class SubmitVerificationTest extends TestCase
                 return '1';
             }
         });
-        app(TransactionVerificationService::class)->process(TransactionVerification::where('uuid', $result->uuid)->value('id'));
+        $again = $this->verifier()->submit($this->request());
 
-        $after = $this->verifier()->find($result->uuid);
-        $this->assertSame(VerificationStatusEnum::COMPLETED, $after->status);
-        $this->assertSame(VerdictEnum::MATCH, $after->verdict);
-        $this->assertNull($after->error);
+        $this->assertSame($result->uuid, $again->uuid);
+        $this->assertSame(VerificationStatusEnum::COMPLETED, $again->status);
+        $this->assertSame(VerdictEnum::MATCH, $again->verdict);
+        $this->assertNull($again->error);
     }
 
     public function test_blank_references_are_not_duplicates_of_each_other(): void
@@ -433,63 +384,60 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame(VerificationStatusEnum::COMPLETED, $result->status);
     }
 
-    public function test_a_failure_before_the_claim_leaves_the_row_pending_for_the_recovery(): void
+    public function test_a_check_that_died_mid_way_is_marked_failed(): void
     {
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE));
-        $realQueue = Queue::getFacadeRoot();
-        Queue::fake();
-        $result = $this->verifier()->submit($this->request(key: 'blip'));
-        Queue::swap($realQueue);
-
-        // The claim UPDATE hits a transient DB error.
-        $thrown = false;
-        DB::connection(config('transaction-verification.connection'))->beforeExecuting(function (string $sql) use (&$thrown) {
-            if (! $thrown && str_starts_with(strtolower($sql), 'update')) {
-                $thrown = true;
-                throw new RuntimeException('connection blip');
-            }
-        });
-        app(TransactionVerificationService::class)->process(TransactionVerification::where('uuid', $result->uuid)->value('id'));
-
-        $row = TransactionVerification::where('uuid', $result->uuid)->first();
-        $this->assertTrue($thrown);
-        $this->assertSame(VerificationStatusEnum::PENDING, $row->status);
-        $this->assertNull($row->error);
-
-        $this->travel(16)->minutes();
-        app(TransactionVerificationService::class)->recoverStale();
-
-        $this->assertSame(VerificationStatusEnum::COMPLETED, $this->verifier()->find($result->uuid)->status);
-    }
-
-    public function test_a_row_whose_worker_died_after_the_claim_is_recovered(): void
-    {
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE));
-        $row = $this->stuckRow(attempts: 1);
+        $row = $this->stuckRow();
 
         $this->travel(10)->minutes();
-        app(TransactionVerificationService::class)->recoverStale();
-        $this->assertSame(VerificationStatusEnum::PROCESSING, $row->fresh()->status, 'a run inside the window may still be alive');
+        app(TransactionVerificationService::class)->failStale();
+        $this->assertSame(VerificationStatusEnum::PROCESSING, $row->fresh()->status, 'a check inside the window may still be running');
 
         $this->travel(6)->minutes();
-        app(TransactionVerificationService::class)->recoverStale();
-
-        $this->assertSame(VerificationStatusEnum::COMPLETED, $row->fresh()->status);
-        $this->assertSame(2, $row->fresh()->attempts);
-    }
-
-    public function test_a_row_that_killed_the_worker_every_time_is_given_up(): void
-    {
-        $row = $this->stuckRow(attempts: 3);
-
-        $this->travel(16)->minutes();
-        app(TransactionVerificationService::class)->recoverStale();
+        app(TransactionVerificationService::class)->failStale();
 
         $this->assertSame(VerificationStatusEnum::FAILED, $row->fresh()->status);
-        $this->assertNotNull($row->fresh()->error);
+        $this->assertSame('Gave up: the check stopped before it finished.', $row->fresh()->error);
     }
 
-    public function test_a_slow_worker_never_overwrites_the_run_that_recovered_its_row(): void
+    public function test_a_check_that_died_after_storing_its_reference_still_flags_a_copy_that_finished_first(): void
+    {
+        // The copy finished before the original stored its reference; the original's request then died before it
+        // could re-check later copies.
+        $original = $this->readingRow(subjectId: 1);
+        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
+        $copy = $this->verifier()->submit($this->request(subjectId: 2));
+        $this->assertSame(VerdictEnum::MATCH, $copy->verdict);
+        $original->update(['reference_hash' => TransactionVerification::where('uuid', $copy->uuid)->value('reference_hash')]);
+
+        $this->travel(16)->minutes();
+        app(TransactionVerificationService::class)->failStale();
+
+        $this->assertSame(VerificationStatusEnum::FAILED, $original->fresh()->status);
+        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy->uuid)->verdict);
+    }
+
+    public function test_a_database_drop_after_the_verdict_never_throws_at_the_caller(): void
+    {
+        // Every read after the verdict write fails: the result can't be reloaded, but submit() must not throw.
+        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE));
+        $db = DB::connection(config('transaction-verification.connection'));
+        $stored = false;
+        $db->listen(function ($query) use (&$stored) {
+            $stored = $stored || str_contains($query->sql, '"verdict"');
+        });
+        $db->beforeExecuting(function (string $sql) use (&$stored) {
+            if ($stored && str_starts_with(strtolower($sql), 'select')) {
+                throw new RuntimeException('connection lost');
+            }
+        });
+
+        $result = $this->verifier()->submit($this->request());
+
+        $this->assertTrue($stored);
+        $this->assertNotNull($result->uuid);
+    }
+
+    public function test_a_slow_check_never_overwrites_the_sweep(): void
     {
         Event::fake([TransactionVerificationCompleted::class]);
         $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE));
@@ -497,8 +445,8 @@ class SubmitVerificationTest extends TestCase
         {
             public function read(string $localPath): string
             {
-                // While this worker reads, the row is recovered and claimed again.
-                TransactionVerification::query()->increment('attempts');
+                // While this check reads, the sweep gives up on it.
+                TransactionVerification::query()->update(['status' => VerificationStatusEnum::FAILED->value, 'error' => 'Gave up: the check stopped before it finished.']);
 
                 return 'receipt text';
             }
@@ -516,18 +464,18 @@ class SubmitVerificationTest extends TestCase
 
         $result = $this->verifier()->submit($this->request());
 
-        $this->assertSame(VerificationStatusEnum::PROCESSING, $result->status);
+        $this->assertSame(VerificationStatusEnum::FAILED, $result->status);
         $this->assertNull($result->verdict);
         Event::assertNotDispatched(TransactionVerificationCompleted::class);
     }
 
-    public function test_a_slow_worker_that_then_fails_never_marks_the_newer_run_failed(): void
+    public function test_a_slow_check_that_then_fails_keeps_the_sweeps_reason(): void
     {
         $this->app->instance(OcrEngine::class, new class implements OcrEngine
         {
             public function read(string $localPath): string
             {
-                TransactionVerification::query()->increment('attempts');
+                TransactionVerification::query()->update(['status' => VerificationStatusEnum::FAILED->value, 'error' => 'Gave up: the check stopped before it finished.']);
 
                 throw new RuntimeException('engine down');
             }
@@ -545,47 +493,90 @@ class SubmitVerificationTest extends TestCase
 
         $result = $this->verifier()->submit($this->request());
 
-        $this->assertSame(VerificationStatusEnum::PROCESSING, $result->status);
-        $this->assertNull($result->error);
+        $this->assertSame(VerificationStatusEnum::FAILED, $result->status);
+        $this->assertSame('Gave up: the check stopped before it finished.', $result->error);
     }
 
-    public function test_a_copy_checked_before_the_original_is_flagged_once_the_original_runs(): void
+    public function test_a_copy_checked_while_the_original_is_read_is_flagged_once_the_original_stores(): void
     {
-        // Fixtures 02 and 04: the original's queue push is lost, so its copy runs first and sees no reference.
+        // The copy arrives in another request while the original is still being read, and finishes first.
         Event::fake([TransactionVerificationCompleted::class]);
         $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
-        $realQueue = Queue::getFacadeRoot();
-        Queue::fake();
+        $engine = $this->duringFirstRead(fn () => $this->verifier()->submit($this->request(subjectId: 2, width: 900)));
+
         $original = $this->verifier()->submit($this->request(subjectId: 1, width: 800));
-        Queue::swap($realQueue);
 
-        $copy = $this->verifier()->submit($this->request(subjectId: 2, width: 900));
-        $this->assertSame(VerdictEnum::MATCH, $copy->verdict);
-
-        $this->verifier()->submit($this->request(subjectId: 1, width: 800));
-
-        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->find($original->uuid)->verdict);
-        $recheck = $this->verifier()->find($copy->uuid);
+        $this->assertSame(VerdictEnum::MATCH, $engine->result->verdict, 'the copy saw no reference yet');
+        $this->assertSame(VerdictEnum::MATCH, $original->verdict);
+        $recheck = $this->verifier()->find($engine->result->uuid);
         $this->assertSame(VerdictEnum::DUPLICATE, $recheck->verdict);
         $this->assertSame([$original->uuid], $recheck->duplicateOf);
         // Listeners see match, then duplicate: the latest event is current.
-        $this->assertSame(['match', 'duplicate'], Event::dispatched(TransactionVerificationCompleted::class, fn ($e) => $e->uuid === $copy->uuid)->map(fn ($args) => $args[0]->verdict)->values()->all());
+        $this->assertSame(['match', 'duplicate'], Event::dispatched(TransactionVerificationCompleted::class, fn ($e) => $e->uuid === $recheck->uuid)->map(fn ($args) => $args[0]->verdict)->values()->all());
+    }
+
+    public function test_an_original_that_finishes_while_a_copy_is_being_checked_still_makes_it_a_duplicate(): void
+    {
+        Event::fake([TransactionVerificationCompleted::class]);
+        // Another request is still reading the original (lower id, no reference yet).
+        $original = $this->readingRow(subjectId: 1);
+        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
+
+        // The copy has looked up duplicates (none yet); just before its verdict lands, the original stores its reference.
+        $db = DB::connection(config('transaction-verification.connection'));
+        $done = false;
+        $db->beforeExecuting(function (string $sql) use (&$done, $db, $original) {
+            if (! $done && str_contains($sql, '"verdict"')) {
+                $done = true;
+                $copyReference = $db->table('transaction_verifications')->where('id', '!=', $original->id)->value('reference_hash');
+                $db->table('transaction_verifications')->where('id', $original->id)->update(['status' => 'completed', 'reference_hash' => $copyReference]);
+            }
+        });
+
+        $copy = $this->verifier()->submit($this->request(subjectId: 2));
+
+        $this->assertTrue($done);
+        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy->uuid)->verdict);
+        $this->assertSame([$original->uuid], $this->verifier()->find($copy->uuid)->duplicateOf);
+        // One announcement, the re-decided one: listeners never see the copy as a match.
+        $this->assertSame(['duplicate'], Event::dispatched(TransactionVerificationCompleted::class, fn ($e) => $e->uuid === $copy->uuid)->map(fn ($args) => $args[0]->verdict)->values()->all());
+    }
+
+    public function test_a_copy_flagged_by_the_original_between_its_verdict_and_its_own_recheck_ends_on_duplicate(): void
+    {
+        // The original (another request, lower id) is read while the copy is checked here.
+        Event::fake([TransactionVerificationCompleted::class]);
+        $original = $this->readingRow(subjectId: 1);
+        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
+
+        // The copy has stored 'match'; before it re-decides itself, the original finishes and re-decides the copy.
+        Log::listen(function (MessageLogged $log) use ($original) {
+            if ($log->message === 'transaction-verification.timing' && $log->context['id'] !== $original->id) {
+                $copy = TransactionVerification::find($log->context['id']);
+                $original->update(['status' => VerificationStatusEnum::COMPLETED, 'reference_hash' => $copy->reference_hash]);
+                $service = app(TransactionVerificationService::class);
+                event((new \ReflectionMethod($service, 'redecide'))->invoke($service, $copy->id));
+            }
+        });
+
+        $copy = $this->verifier()->submit($this->request(subjectId: 2));
+
+        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy->uuid)->verdict);
+        // Whatever arrives last is current: never the copy's stale 'match'.
+        $verdicts = Event::dispatched(TransactionVerificationCompleted::class, fn ($e) => $e->uuid === $copy->uuid)->map(fn ($args) => $args[0]->verdict)->values()->all();
+        $this->assertNotContains('match', $verdicts);
+        $this->assertSame('duplicate', end($verdicts));
     }
 
     public function test_a_recheck_never_reruns_a_finished_copy(): void
     {
-        // A re-run could fail (here: its file is gone) and bury the verdict under 'failed'.
         $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
-        $realQueue = Queue::getFacadeRoot();
-        Queue::fake();
+        $engine = $this->duringFirstRead(fn () => $this->verifier()->submit($this->request(subjectId: 2, width: 900)));
+
         $original = $this->verifier()->submit($this->request(subjectId: 1, width: 800));
-        Queue::swap($realQueue);
-        $copy = $this->verifier()->submit($this->request(subjectId: 2, width: 900));
-        Storage::disk('hetzner')->delete("transaction-verifications/{$copy->uuid}.png");
 
-        $this->verifier()->submit($this->request(subjectId: 1, width: 800));
-
-        $recheck = TransactionVerification::where('uuid', $copy->uuid)->first();
+        $recheck = TransactionVerification::where('uuid', $engine->result->uuid)->first();
+        $this->assertSame(2, $engine->reads, 'each receipt read once');
         $this->assertSame(VerificationStatusEnum::COMPLETED, $recheck->status);
         $this->assertSame(VerdictEnum::DUPLICATE, $recheck->verdict);
         $this->assertSame(1, $recheck->attempts);
@@ -595,24 +586,27 @@ class SubmitVerificationTest extends TestCase
     public function test_an_original_that_fails_after_reading_still_flags_a_copy_that_ran_first(): void
     {
         $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
-        $realQueue = Queue::getFacadeRoot();
-        Queue::fake();
-        $original = $this->verifier()->submit($this->request(subjectId: 1, width: 800));
-        Queue::swap($realQueue);
-        $copy = $this->verifier()->submit($this->request(subjectId: 2, width: 900));
-
-        // The original's verdict write hits a DB blip.
+        // The original's verdict write, once the copy is done, hits a DB blip.
+        $armed = false;
         $failed = false;
-        DB::connection(config('transaction-verification.connection'))->beforeExecuting(function (string $sql) use (&$failed) {
-            if (! $failed && str_contains($sql, '"verdict"')) {
+        DB::connection(config('transaction-verification.connection'))->beforeExecuting(function (string $sql) use (&$armed, &$failed) {
+            if ($armed && ! $failed && str_contains($sql, '"verdict"')) {
                 $failed = true;
                 throw new RuntimeException('connection blip');
             }
         });
-        $this->verifier()->submit($this->request(subjectId: 1, width: 800));
+        $engine = $this->duringFirstRead(function () use (&$armed) {
+            $copy = $this->verifier()->submit($this->request(subjectId: 2, width: 900));
+            $armed = true;
 
-        $this->assertSame(VerificationStatusEnum::FAILED, $this->verifier()->find($original->uuid)->status);
-        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy->uuid)->verdict);
+            return $copy;
+        });
+
+        $original = $this->verifier()->submit($this->request(subjectId: 1, width: 800));
+
+        $this->assertTrue($failed);
+        $this->assertSame(VerificationStatusEnum::FAILED, $original->status);
+        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($engine->result->uuid)->verdict);
     }
 
     public function test_an_original_that_failed_after_reading_still_catches_a_later_copy(): void
@@ -657,6 +651,31 @@ class SubmitVerificationTest extends TestCase
         $result = $this->verifier()->submit($this->request());
 
         $this->assertSame(VerificationStatusEnum::FAILED, $result->status);
+    }
+
+    public function test_a_failure_quoting_the_receipt_never_reaches_the_log(): void
+    {
+        // An engine or parser error may quote what it read; only its class is logged.
+        $this->secondReading('always', null);
+        $this->app->instance(ReceiptParser::class, new class implements ReceiptParser
+        {
+            public function parse(string $text): ExtractedFields
+            {
+                throw new RuntimeException('could not parse: To 01000000001');
+            }
+        });
+        $this->reading('receipt text');
+        $logged = [];
+        Log::listen(function (MessageLogged $log) use (&$logged) {
+            $logged[] = $log->message.' '.json_encode($log->context);
+        });
+
+        $result = $this->verifier()->submit($this->request());
+
+        $this->assertSame(VerificationStatusEnum::FAILED, $result->status);
+        $this->assertNotEmpty($logged);
+        $this->assertStringNotContainsString(self::PHONE, implode("\n", $logged));
+        $this->assertStringContainsString('RuntimeException', implode("\n", $logged));
     }
 
     public function test_lookups_use_keyed_hashes(): void
@@ -711,17 +730,47 @@ class SubmitVerificationTest extends TestCase
         $this->assertStringNotContainsString(self::PHONE, (string) $raw->expected_destination);
         $this->assertStringNotContainsString(self::PHONE, (string) $raw->extracted);
         $this->assertStringNotContainsString(self::PHONE, (string) $raw->checks);
-        $this->assertStringNotContainsString('receipt text', (string) $raw->ocr_text);
-        // The second engine's text holds the same personal data.
-        $this->assertNotEmpty($raw->second_ocr_text);
-        $this->assertStringNotContainsString(self::PHONE, (string) $raw->second_ocr_text);
-        $this->assertStringContainsString(self::PHONE, (string) TransactionVerification::first()->second_ocr_text);
+        // What the engines read is used, never kept.
+        $this->assertObjectNotHasProperty('ocr_text', $raw);
+        $this->assertObjectNotHasProperty('second_ocr_text', $raw);
 
         $array = TransactionVerification::first()->toArray();
         $this->assertArrayNotHasKey('expected_destination', $array);
         $this->assertArrayNotHasKey('extracted', $array);
-        $this->assertArrayNotHasKey('ocr_text', $array);
-        $this->assertArrayNotHasKey('second_ocr_text', $array);
+    }
+
+    public function test_the_check_writes_nothing_to_any_disk(): void
+    {
+        Storage::fake('local');
+        $temp = fn () => glob(sys_get_temp_dir().'/tv_*') ?: [];
+        $before = $temp();
+        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE));
+        $request = $this->request(key: 'read');
+        $this->verifier()->submit($request);
+        // The upload is the caller's: PHP deletes it when the request ends, the package never does.
+        $this->assertFileExists($request->file->getRealPath());
+
+        $this->app->instance(OcrEngine::class, new class implements OcrEngine
+        {
+            public function read(string $localPath): string
+            {
+                throw new RuntimeException('engine down');
+            }
+
+            public function name(): string
+            {
+                return 'broken';
+            }
+
+            public function version(): string
+            {
+                return '1';
+            }
+        });
+        $this->verifier()->submit($this->request(subjectId: 2, key: 'failed'));
+
+        $this->assertSame([], Storage::disk('local')->allFiles());
+        $this->assertSame($before, $temp());
     }
 
     public function test_latest_for_accepts_an_integer_subject_id(): void
@@ -734,17 +783,68 @@ class SubmitVerificationTest extends TestCase
         $this->assertNull($this->verifier()->latestFor('affiliate_payout', 999));
     }
 
-    private function stuckRow(int $attempts): TransactionVerification
+    private function stuckRow(): TransactionVerification
     {
-        $realQueue = Queue::getFacadeRoot();
-        Queue::fake();
         $result = $this->verifier()->submit($this->request());
-        Queue::swap($realQueue);
-
         $row = TransactionVerification::where('uuid', $result->uuid)->first();
-        $row->update(['status' => VerificationStatusEnum::PROCESSING, 'attempts' => $attempts]);
+        $row->update(['status' => VerificationStatusEnum::PROCESSING]);
 
         return $row;
+    }
+
+    /** A row another request is still reading: lower id, no reference yet. */
+    private function readingRow(int $subjectId): TransactionVerification
+    {
+        return TransactionVerification::create([
+            'uuid' => (string) Str::uuid(),
+            'subject_type' => 'affiliate_payout',
+            'subject_id' => (string) $subjectId,
+            'status' => VerificationStatusEnum::PROCESSING,
+            'attempts' => 1,
+            'expected_amount_minor' => 307000,
+            'currency' => 'EGP',
+            'expected_destination' => ['type' => ExpectedDestination::PHONE, 'value' => self::PHONE],
+            'expected_destination_hash' => str_repeat('0', 64),
+            'file_mime' => 'image/png',
+            'file_size' => 1,
+            'file_sha256' => str_repeat('a', 64),
+            'idempotency_key' => "reading:{$subjectId}",
+        ]);
+    }
+
+    /** The fake reading's engine, except that its first read runs $during first: another request arriving mid-read. */
+    private function duringFirstRead(callable $during): object
+    {
+        $engine = new class($during) implements OcrEngine
+        {
+            public int $reads = 0;
+
+            public mixed $result = null;
+
+            public function __construct(private $during) {}
+
+            public function read(string $localPath): string
+            {
+                if ($this->reads++ === 0) {
+                    $this->result = ($this->during)();
+                }
+
+                return 'receipt text';
+            }
+
+            public function name(): string
+            {
+                return 'fake';
+            }
+
+            public function version(): string
+            {
+                return '1';
+            }
+        };
+        $this->app->instance(OcrEngine::class, $engine);
+
+        return $engine;
     }
 
     private function verifier(): TransactionVerifier

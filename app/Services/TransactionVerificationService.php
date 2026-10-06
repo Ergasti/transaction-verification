@@ -7,7 +7,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Modules\TransactionVerification\Contracts\OcrEngine;
 use Modules\TransactionVerification\Contracts\ReceiptParser;
@@ -20,7 +19,6 @@ use Modules\TransactionVerification\Data\VerificationResult;
 use Modules\TransactionVerification\Enums\VerdictEnum;
 use Modules\TransactionVerification\Enums\VerificationStatusEnum;
 use Modules\TransactionVerification\Events\TransactionVerificationCompleted;
-use Modules\TransactionVerification\Jobs\ProcessVerificationJob;
 use Modules\TransactionVerification\Models\TransactionVerification;
 use Modules\TransactionVerification\Services\Ocr\RapidOcrEngine;
 use Modules\TransactionVerification\Services\Ocr\TesseractEngine;
@@ -29,9 +27,6 @@ use Throwable;
 
 class TransactionVerificationService implements TransactionVerifier
 {
-    // A worker that died on the same receipt this many times won't do better on the next try.
-    private const MAX_ATTEMPTS = 3;
-
     public function __construct(
         private readonly OcrEngine $engine,
         private readonly ReceiptParser $parser,
@@ -43,49 +38,25 @@ class TransactionVerificationService implements TransactionVerifier
     public function submit(VerificationRequest $request): VerificationResult
     {
         if ($existing = TransactionVerification::where('idempotency_key', $request->idempotencyKey)->first()) {
-            // Its job may never have been queued (queue down). A second job is harmless: run() claims the row atomically.
-            if ($existing->status === VerificationStatusEnum::PENDING) {
-                $this->queue($existing->id);
-                $existing = $existing->fresh();
-            }
-
             return $this->toResult($existing);
         }
 
-        $disk = config('transaction-verification.disk');
-        $uuid = (string) Str::uuid();
         $file = $request->file;
-        $folder = config('transaction-verification.folder');
-        $name = $uuid.'.'.($file->extension() ?: 'bin');
-
-        try {
-            $path = $file->storeAs($folder, $name, $disk);
-        } catch (Throwable $e) {
-            // A timed-out reply can hide an object that did land.
-            rescue(fn () => Storage::disk($disk)->delete(trim($folder.'/'.$name, '/')), report: false);
-
-            throw $e;
-        }
-
-        if ($path === false) {
-            throw new RuntimeException("Could not store the receipt on disk [{$disk}].");
-        }
-
         $destination = $request->expectedDestination;
 
         try {
+            // Created already claimed: this request checks it, and nothing else ever will.
             $row = TransactionVerification::create([
-                'uuid' => $uuid,
+                'uuid' => (string) Str::uuid(),
                 'subject_type' => $request->subjectType,
                 'subject_id' => (string) $request->subjectId,
                 'merchant_id' => $request->merchantId,
-                'status' => VerificationStatusEnum::PENDING,
+                'status' => VerificationStatusEnum::PROCESSING,
+                'attempts' => 1,
                 'expected_amount_minor' => $request->expectedAmountMinor,
                 'currency' => $request->currency,
                 'expected_destination' => ['type' => $destination->type, 'value' => $destination->value],
                 'expected_destination_hash' => $this->blindIndex($destination->type.':'.$this->matcher->normaliseDestination($destination)),
-                'file_disk' => $disk,
-                'file_path' => $path,
                 'file_mime' => (string) $file->getMimeType(),
                 'file_size' => (int) $file->getSize(),
                 'file_sha256' => hash_file('sha256', $file->getRealPath()),
@@ -95,30 +66,27 @@ class TransactionVerificationService implements TransactionVerifier
         } catch (UniqueConstraintViolationException $e) {
             // A concurrent submit with the same key won the insert. A locking read sees its
             // committed row even inside a caller's REPEATABLE READ transaction.
-            rescue(fn () => Storage::disk($disk)->delete($path), report: false);
             $winner = TransactionVerification::where('idempotency_key', $request->idempotencyKey)->sharedLock()->first();
 
-            if (! $winner) {
-                throw $e;
-            }
-
-            // Same as the pre-check: the winner's own queue push may have failed.
-            if ($winner->status === VerificationStatusEnum::PENDING) {
-                $this->queue($winner->id);
-                $winner = $winner->fresh();
-            }
-
-            return $this->toResult($winner);
-        } catch (Throwable $e) {
-            // Never leave a receipt (personal data) behind without its row.
-            rescue(fn () => Storage::disk($disk)->delete($path), report: false);
-
-            throw $e;
+            return $winner ? $this->toResult($winner) : throw $e;
         }
 
-        $this->queue($row->id);
+        // Read straight from the upload: the receipt is never stored, and PHP deletes the upload when the request ends.
+        try {
+            $completed = $this->check($row, $file->getRealPath());
+        } catch (Throwable $e) {
+            // The class only: a message may quote the receipt. The row keeps the detail.
+            rescue(fn () => Log::warning('transaction-verification.failed', ['id' => $row->id, 'exception' => $e::class]), report: false);
+            $completed = null;
+        }
 
-        return $this->toResult($row->fresh());
+        // Outside the try: a throwing listener (or a broken reporter) never turns a stored verdict into 'failed'.
+        if ($completed) {
+            $this->quietly(fn () => event($completed));
+        }
+
+        // A database gone after the verdict: the row as created, rather than throwing at the caller.
+        return $this->toResult(rescue(fn () => $row->fresh(), null, report: false) ?? $row);
     }
 
     public function latestFor(string $subjectType, string|int $subjectId): ?VerificationResult
@@ -148,110 +116,40 @@ class TransactionVerificationService implements TransactionVerifier
             ->through(fn (TransactionVerification $row) => $this->toResult($row));
     }
 
-    public function reprocess(string $uuid): ?VerificationResult
+    /**
+     * Scheduled. A check that died mid-way (crash, time limit) can't be retried without the receipt: a person checks it.
+     * Pending: rows queued by 0.1 and never read.
+     */
+    public function failStale(): void
     {
-        // Attempts keep counting, so a slow old run is still refused.
-        $reopened = TransactionVerification::where('uuid', $uuid)
-            ->whereIn('status', [VerificationStatusEnum::COMPLETED->value, VerificationStatusEnum::FAILED->value])
-            ->update(['status' => VerificationStatusEnum::PENDING->value, 'verdict' => null, 'checks' => null, 'confidence' => null, 'extracted' => null, 'error' => null, 'processed_at' => null, 'updated_at' => now()]);
+        $stale = fn () => TransactionVerification::where('updated_at', '<', now()->subMinutes((int) config('transaction-verification.stale_minutes')))
+            ->whereIn('status', [VerificationStatusEnum::PENDING->value, VerificationStatusEnum::PROCESSING->value]);
+        $rows = $stale()->get(['id', 'subject_type', 'subject_id', 'reference_hash']);
 
-        $row = TransactionVerification::where('uuid', $uuid)->first();
+        $stale()->whereKey($rows->modelKeys())
+            ->update(['status' => VerificationStatusEnum::FAILED->value, 'error' => 'Gave up: the check stopped before it finished.', 'updated_at' => now()]);
 
-        if ($row && $reopened) {
-            $this->queue($row->id);
-            $row = $row->fresh();
-        }
-
-        return $row ? $this->toResult($row) : null;
+        // One that died after storing its reference never told the copies that finished before it.
+        $rows->each(fn (TransactionVerification $row) => $this->recheckLaterCopies($row, $row->reference_hash));
     }
 
-    public function temporaryFileUrl(string $uuid, int $minutes = 5): ?string
+    private function check(TransactionVerification $row, string $path): ?TransactionVerificationCompleted
     {
-        if ($minutes < 1 || $minutes > 60) {
-            throw new \InvalidArgumentException('A receipt link lasts 1-60 minutes.');
-        }
-
-        $row = TransactionVerification::where('uuid', $uuid)->first();
-
-        return $row ? Storage::disk($row->file_disk)->temporaryUrl($row->file_path, now()->addMinutes($minutes)) : null;
-    }
-
-    /** OCR, parse, duplicate lookup, verdict. Never throws: this module warns, it doesn't fail the caller. */
-    public function process(int $id): void
-    {
-        try {
-            $completed = $this->run($id);
-        } catch (Throwable $e) {
-            // A failure before the claim leaves the row pending; the scheduled recovery re-queues it.
-            rescue(fn () => Log::warning('transaction-verification.failed', ['id' => $id, 'error' => $this->errorText($e)]), report: false);
-
-            return;
-        }
-
-        // Outside the try: a throwing listener (or a broken reporter) never turns a stored verdict into 'failed'.
-        if ($completed) {
-            $this->quietly(fn () => event($completed));
-        }
-    }
-
-    /** Scheduled. Re-queues rows whose job was lost or whose worker died mid-run. */
-    public function recoverStale(): void
-    {
-        $cutoff = now()->subMinutes((int) config('transaction-verification.stale_minutes'));
-        $stale = fn () => TransactionVerification::where('updated_at', '<', $cutoff);
-
-        $stale()->where('status', VerificationStatusEnum::PROCESSING->value)
-            ->where('attempts', '>=', self::MAX_ATTEMPTS)
-            ->update(['status' => VerificationStatusEnum::FAILED->value, 'error' => 'Gave up: claimed '.self::MAX_ATTEMPTS.' times without finishing.', 'updated_at' => now()]);
-
-        $ids = $stale()->whereIn('status', [VerificationStatusEnum::PENDING->value, VerificationStatusEnum::PROCESSING->value])->pluck('id');
-
-        // Back to pending so a new job can claim it; a slow old worker's result is then refused (attempts moved on).
-        $stale()->whereKey($ids)
-            ->whereIn('status', [VerificationStatusEnum::PENDING->value, VerificationStatusEnum::PROCESSING->value])
-            ->update(['status' => VerificationStatusEnum::PENDING->value, 'updated_at' => now()]);
-
-        $ids->each(fn (int $id) => $this->queue($id));
-    }
-
-    private function run(int $id): ?TransactionVerificationCompleted
-    {
-        // Atomic claim: only one job ever moves a row out of pending, so duplicate dispatches are no-ops.
-        $claimed = TransactionVerification::whereKey($id)
-            ->where('status', VerificationStatusEnum::PENDING->value)
-            ->increment('attempts', 1, ['status' => VerificationStatusEnum::PROCESSING->value]);
-
-        if ($claimed === 0) {
-            return null;
-        }
-
-        $row = TransactionVerification::findOrFail($id);
+        $id = $row->id;
         $attempt = $row->attempts;
-        $tmp = null;
         $referenceHash = null;
         $started = hrtime(true);
 
         try {
-            // Checked before the whole file is read into memory.
             if ($row->file_size > (int) config('transaction-verification.max_file_bytes')) {
                 throw new RuntimeException('The receipt file is too large to read.');
             }
 
-            $contents = Storage::disk($row->file_disk)->get($row->file_path);
-
-            if ($contents === null) {
-                throw new RuntimeException('The stored receipt file is missing.');
-            }
-
-            $tmp = tempnam(sys_get_temp_dir(), 'tv_');
-            file_put_contents($tmp, $contents);
-            $timing = ['download_ms' => $this->ms($started)];
-
             $step = hrtime(true);
-            [$text, $fields, $early, $passes] = $this->firstRead($tmp, $row);
-            $timing['first_ms'] = $this->ms($step);
+            [$text, $fields, $early, $passes] = $this->firstRead($path, $row);
+            $timing = ['first_ms' => $this->ms($step)];
             // Before the reference is hashed: on 'fallback' the second engine may supply it.
-            [$fields, $secondText, $secondMs] = $this->secondRead($tmp, $row, $fields, $early);
+            [$fields, $secondText, $secondMs] = $this->secondRead($path, $row, $fields, $early);
             $timing['second_ms'] = $secondText === null ? null : $secondMs;
             $timing['passes'] = $passes;
 
@@ -269,10 +167,10 @@ class TransactionVerificationService implements TransactionVerifier
                 ? [$this->engine->name(), $this->engine->version()]
                 : [$this->engine->name().'+'.$this->secondEngine->name(), Str::limit($this->engine->version().' + '.$this->secondEngine->version(), 60)];
 
-            $stored = DB::connection(config('transaction-verification.connection'))->transaction(function () use ($id, $attempt, $decision, $fields, $text, $secondText, $engineName, $engineVersion) {
+            $stored = DB::connection(config('transaction-verification.connection'))->transaction(function () use ($id, $attempt, $decision, $fields, $engineName, $engineVersion) {
                 $current = TransactionVerification::whereKey($id)->lockForUpdate()->first();
 
-                // Recovered or sent back for a re-check since this run claimed it: the newer run owns the row.
+                // The sweep gave up on it meanwhile: failed stays failed.
                 if ($current?->status !== VerificationStatusEnum::PROCESSING || $current->attempts !== $attempt) {
                     return false;
                 }
@@ -283,8 +181,6 @@ class TransactionVerificationService implements TransactionVerifier
                     'checks' => $decision['checks'],
                     'confidence' => $decision['confidence'],
                     'extracted' => $fields->toArray(),
-                    'ocr_text' => $text,
-                    'second_ocr_text' => $secondText,
                     'engine' => $engineName,
                     'engine_version' => $engineVersion,
                     'processed_at' => now(),
@@ -301,25 +197,27 @@ class TransactionVerificationService implements TransactionVerifier
 
             // Best effort: the verdict is stored, so a failure here is reported, never turned into 'failed'.
             $this->recheckLaterCopies($row, $referenceHash);
-            $this->recheckLinkedCopies($row);
 
-            return $this->completedEvent($row, $decision);
+            // An original whose reference landed after this lookup, while this verdict was on its way, is seen now.
+            $redecided = rescue(fn () => $this->redecide($id), fn (Throwable $e) => $this->quietly(fn () => report($e)), report: false);
+
+            // Unchanged here, but another request may have re-decided this row meanwhile: announce what is stored now,
+            // so the last event is never an older verdict.
+            $current = $redecided ? null : rescue(fn () => TransactionVerification::find($id), null, report: false);
+
+            return $redecided ?? ($current?->status === VerificationStatusEnum::COMPLETED
+                ? $this->completedEvent($current, ['verdict' => $current->verdict, 'checks' => $current->checks ?? []])
+                : $this->completedEvent($row, $decision));
         } catch (Throwable $e) {
             // A query, not the model: a half-filled model must not save its verdict next to 'failed'.
-            // Only this run's claim: a newer run of a recovered row keeps going.
+            // Only while this run holds it: a row the sweep marked failed keeps its reason.
             rescue(fn () => $this->claimed($id, $attempt)
                 ->update(['status' => VerificationStatusEnum::FAILED->value, 'error' => $this->errorText($e), 'updated_at' => now()]), report: false);
 
             // A failed row keeps its stored reference, so copies that ran before it still get caught.
             $this->recheckLaterCopies($row, $referenceHash);
-            $this->recheckLinkedCopies($row);
 
             throw $e;
-        } finally {
-            // A failed unlink must not turn a completed row's run into a failure.
-            if ($tmp !== null) {
-                rescue(fn () => is_file($tmp) && unlink($tmp), report: false);
-            }
         }
     }
 
@@ -420,7 +318,7 @@ class TransactionVerificationService implements TransactionVerifier
             $text = $this->secondEngine->read($path);
             $second = $text === '' ? new ExtractedFields : $this->parser->parse($text);
         } catch (Throwable $e) {
-            $this->quietly(fn () => Log::warning('transaction-verification.second-engine-failed', ['id' => $id, 'error' => $this->errorText($e)]));
+            $this->quietly(fn () => Log::warning('transaction-verification.second-engine-failed', ['id' => $id, 'exception' => $e::class]));
             [$text, $second] = ['', new ExtractedFields];
         }
 
@@ -437,29 +335,13 @@ class TransactionVerificationService implements TransactionVerifier
         $this->quietly(fn () => $this->recheck($this->duplicates->laterCopies($row, $referenceHash)));
     }
 
-    /**
-     * Copies once flagged through this row's reference, which a rerun may have changed. Every run, not only on a
-     * change: a run that died after storing its reference leaves no trace of the old one.
-     */
-    private function recheckLinkedCopies(TransactionVerification $row): void
-    {
-        $this->quietly(fn () => $this->recheck($this->duplicates->copiesByReference($row)));
-    }
-
     /** @param  list<int>  $ids */
     private function recheck(array $ids): void
     {
         foreach ($ids as $id) {
             $this->quietly(function () use ($id) {
-                // Still running: its run can no longer store a verdict, and the new one finds this row.
-                if (TransactionVerification::whereKey($id)->where('status', VerificationStatusEnum::PROCESSING->value)
-                    ->update(['status' => VerificationStatusEnum::PENDING->value, 'updated_at' => now()])) {
-                    $this->queue($id);
-
-                    return;
-                }
-
-                // Finished: decided again from its stored reading. No new OCR run that could fail and lose the verdict.
+                // Finished: decided again from its stored reading (no receipt to re-read). One still being checked
+                // decides itself again once its verdict is stored.
                 if ($event = $this->redecide($id)) {
                     event($event);
                 }
@@ -524,13 +406,6 @@ class TransactionVerificationService implements TransactionVerifier
     private function ms(int $since): int
     {
         return intdiv(hrtime(true) - $since, 1_000_000);
-    }
-
-    private function queue(int $id): void
-    {
-        ProcessVerificationJob::dispatch($id)
-            ->onQueue(config('transaction-verification.queue'))
-            ->afterCommit();
     }
 
     private function errorText(Throwable $e): string
