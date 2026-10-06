@@ -45,7 +45,7 @@ class ResultAndReportTest extends TestCase
 
     public function test_a_result_shows_what_was_read_with_the_phone_masked(): void
     {
-        $this->reading((string) file_get_contents(__DIR__.'/../fixtures/ocr/instapay-01.txt'));
+        $this->reading(self::RECEIPT);
 
         $result = $this->verifier()->find($this->verifier()->submit($this->request())->uuid);
 

@@ -311,6 +311,7 @@ vendor/bin/phpunit
 ```
 
 The tests run on sqlite in memory with no app around them (Orchestra Testbench). The real-receipt tests skip unless
-Tesseract and the private receipt images are present; the images are never committed.
+Tesseract and the private receipt images are present, and the recorded-receipt parser tests skip without their OCR
+text (`tests/fixtures/ocr/`); neither is ever committed.
 
 The design, the accuracy gate and the decisions behind it are in [docs/plan.md](docs/plan.md).

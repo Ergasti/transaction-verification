@@ -35,6 +35,9 @@ class SubmitVerificationTest extends TestCase
 
     private const PHONE = '01000000001';
 
+    // An InstaPay receipt as OCR reads it: amount, destination and reference.
+    private const RECEIPT = "3,070 EGP\nTransfer Amount\nTo Instapay\n01000000001\nReference 100000000001";
+
     private ?string $secondText = null;
 
     protected function setUp(): void
@@ -53,7 +56,7 @@ class SubmitVerificationTest extends TestCase
 
     public function test_always_a_second_engine_that_reads_the_same_confirms_the_match(): void
     {
-        $this->recordedReading('01');
+        $this->reading(self::RECEIPT);
         $this->secondReading('always', "3,070 EGP\nTransfer Amount\nTo Instapay\n01000000001\nReference 100000000001");
 
         $result = $this->verifier()->submit($this->request());
@@ -72,7 +75,7 @@ class SubmitVerificationTest extends TestCase
             'no phone' => "3,070 EGP\nTransfer Amount\nTo Instapay",
             'nothing' => '',
         ] as $case => $second) {
-            $this->recordedReading('01');
+            $this->reading(self::RECEIPT);
             $this->secondReading('always', $second);
 
             $result = $this->verifier()->submit($this->request(key: $case));
@@ -84,7 +87,7 @@ class SubmitVerificationTest extends TestCase
     public function test_always_a_second_engine_that_is_down_sends_the_match_to_a_person_and_never_fails_the_row(): void
     {
         Log::spy();
-        $this->recordedReading('01');
+        $this->reading(self::RECEIPT);
         $this->secondReading('always', null);
 
         $result = $this->verifier()->submit($this->request());
@@ -105,7 +108,7 @@ class SubmitVerificationTest extends TestCase
 
     public function test_fallback_a_reference_only_the_second_engine_read_still_catches_a_reused_receipt(): void
     {
-        $this->recordedReading('01');
+        $this->reading(self::RECEIPT);
         $this->verifier()->submit($this->request(subjectId: 1, width: 800));
 
         // Tesseract lost the phone and the reference; the second engine's reference must reach the duplicate check.
@@ -117,7 +120,7 @@ class SubmitVerificationTest extends TestCase
 
     public function test_a_mistyped_mode_is_always_never_off(): void
     {
-        $this->recordedReading('01');
+        $this->reading(self::RECEIPT);
         $this->secondReading('alwyas', "3,080 EGP\nTransfer Amount\nTo Instapay\n01000000001");
 
         $this->assertSame(VerdictEnum::NEEDS_REVIEW, $this->verifier()->submit($this->request())->verdict);
@@ -125,7 +128,7 @@ class SubmitVerificationTest extends TestCase
 
     public function test_off_never_asks_the_second_engine(): void
     {
-        $this->recordedReading('01');
+        $this->reading(self::RECEIPT);
         $this->secondReading('off', 'unused');
 
         $this->assertSame(VerdictEnum::MATCH, $this->verifier()->submit($this->request())->verdict);
@@ -134,7 +137,7 @@ class SubmitVerificationTest extends TestCase
 
     public function test_fallback_leaves_a_sure_reading_alone(): void
     {
-        $this->recordedReading('01');
+        $this->reading(self::RECEIPT);
         $this->secondReading('fallback', "3,080 EGP\nTransfer Amount\nTo Instapay\n01000000009");
 
         $result = $this->verifier()->submit($this->request());
@@ -201,7 +204,7 @@ class SubmitVerificationTest extends TestCase
 
     public function test_a_recorded_instapay_receipt_is_read_and_matched(): void
     {
-        $this->recordedReading('01');
+        $this->reading(self::RECEIPT);
 
         $result = $this->verifier()->submit($this->request());
 
@@ -212,7 +215,7 @@ class SubmitVerificationTest extends TestCase
 
     public function test_a_recorded_receipt_for_another_amount_is_a_mismatch(): void
     {
-        $this->recordedReading('01');
+        $this->reading(self::RECEIPT);
 
         $result = $this->verifier()->submit(new VerificationRequest(
             subjectType: 'affiliate_payout',
@@ -230,7 +233,7 @@ class SubmitVerificationTest extends TestCase
     public function test_a_decimal_point_one_pass_kept_turns_the_match_into_needs_review(): void
     {
         // Receipt 01 re-sent for 1.50: three passes lose the point and read the payout's 150, one keeps it.
-        $pass = explode("\f", (string) file_get_contents(__DIR__.'/../fixtures/ocr/instapay-01.txt'))[0];
+        $pass = self::RECEIPT;
         $this->reading(implode("\f", [...array_fill(0, 3, str_replace('3,070', '150', $pass)), str_replace('3,070', '1.50', $pass)]));
 
         $result = $this->verifier()->submit(new VerificationRequest(
@@ -248,7 +251,7 @@ class SubmitVerificationTest extends TestCase
     public function test_the_same_transfer_in_english_and_arabic_is_a_duplicate(): void
     {
         // Fixtures 01 (English UI) and 08 (Arabic UI) are one transfer: different bytes, same reference.
-        $this->recordedReading('01');
+        $this->reading(self::RECEIPT);
         $english = $this->verifier()->submit($this->request(subjectId: 1, width: 800));
 
         $this->recordedReading('08');
@@ -867,7 +870,13 @@ class SubmitVerificationTest extends TestCase
     /** The engine returns a recorded (synthetic) Tesseract output; the real InstaPay parser reads it. */
     private function recordedReading(string $fixture): void
     {
-        $this->reading((string) file_get_contents(__DIR__."/../fixtures/ocr/instapay-{$fixture}.txt"));
+        $path = __DIR__."/../fixtures/ocr/instapay-{$fixture}.txt";
+
+        if (! is_file($path)) {
+            $this->markTestSkipped('Needs the recorded receipts in tests/fixtures/ocr/ (local only, not in git).');
+        }
+
+        $this->reading((string) file_get_contents($path));
     }
 
     /** The sidecar's answer: its lines, or null for a 500. Read when the request is made: the first fake stub wins. */

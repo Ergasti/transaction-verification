@@ -8,7 +8,7 @@ use Modules\TransactionVerification\Services\Parsers\InstaPayReceiptParser;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Modules\TransactionVerification\Tests\TestCase;
 
-/** Recorded Tesseract output of the real fixtures (3 passes each), with every phone, reference and name made synthetic. */
+/** Recorded Tesseract output of the real fixtures (3 passes each), kept out of git: those tests skip without the files. */
 class InstaPayReceiptParserTest extends TestCase
 {
     /** @return array<string, array{string, int, string, ?string, ?string, ?string}> */
@@ -30,7 +30,7 @@ class InstaPayReceiptParserTest extends TestCase
     #[DataProvider('receipts')]
     public function test_it_reads_every_recorded_receipt(string $id, int $amount, string $phone, ?string $reference, ?string $date, ?string $status): void
     {
-        $fields = $this->parse((string) file_get_contents(__DIR__."/../fixtures/ocr/instapay-{$id}.txt"));
+        $fields = $this->parse($this->recorded($id));
 
         $this->assertSame($amount, $fields->amountMinor);
         $this->assertSame('EGP', $fields->currency);
@@ -59,7 +59,7 @@ class InstaPayReceiptParserTest extends TestCase
     #[DataProvider('otherDestinations')]
     public function test_it_reads_the_bank_card_and_wallet_receipts(string $id, ?string $phone, ?string $account, string $reference, string $date): void
     {
-        $fields = $this->parse((string) file_get_contents(__DIR__."/../fixtures/ocr/instapay-{$id}.txt"));
+        $fields = $this->parse($this->recorded($id));
 
         $this->assertSame(2500, $fields->amountMinor);
         $this->assertSame($phone, $fields->phone);
@@ -328,5 +328,17 @@ class InstaPayReceiptParserTest extends TestCase
     private function parse(string $text): ExtractedFields
     {
         return app(InstaPayReceiptParser::class)->parse($text);
+    }
+
+    /** Recorded output of real receipts: local only, like the screenshots (tests/fixtures/ocr/ is git-ignored). */
+    private function recorded(string $id): string
+    {
+        $path = __DIR__."/../fixtures/ocr/instapay-{$id}.txt";
+
+        if (! is_file($path)) {
+            $this->markTestSkipped('Needs the recorded receipts in tests/fixtures/ocr/ (local only, not in git).');
+        }
+
+        return (string) file_get_contents($path);
     }
 }
