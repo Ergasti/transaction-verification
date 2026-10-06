@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
+
+**Breaking** for an app that ran the install command in scripts.
 
 - Removed `php artisan transaction-verification:install` and the `transaction-verification-config` publish tag: every
   setting is an env variable, so an app needs no config file. Set `TRANSACTION_VERIFICATION_DB_CONNECTION` before

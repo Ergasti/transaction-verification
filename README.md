@@ -16,7 +16,7 @@ A Laravel 12 package (PHP 8.3+). The namespace is `Modules\TransactionVerificati
 
 ```json
 "repositories": [{"type": "vcs", "url": "https://github.com/Ergasti/transaction-verification"}],
-"require": {"ergasti/transaction-verification": "^0.2"}
+"require": {"ergasti/transaction-verification": "^0.4"}
 ```
 
 ```bash
@@ -55,7 +55,7 @@ disk until the request ends.
 
 ```yaml
 ocr_rapid:
-  image: ghcr.io/ergasti/transaction-verification-ocr:0.3.0   # the same version as the package
+  image: ghcr.io/ergasti/transaction-verification-ocr:0.4.0   # the same version as the package
   restart: always
   mem_limit: 2g
   cpus: 4
