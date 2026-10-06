@@ -69,7 +69,7 @@ php artisan vendor:publish --tag=transaction-verification-config
 
 ```yaml
 ocr_rapid:
-  image: ghcr.io/ergasti/transaction-verification-ocr:0.1.0   # the same version as the package
+  image: ghcr.io/ergasti/transaction-verification-ocr:0.1.1   # the same version as the package
   restart: always
   mem_limit: 2g
   cpus: 4
