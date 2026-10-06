@@ -282,7 +282,7 @@ Modules/TransactionVerification/
       ReceiptParser.php
     Data/                      # PUBLIC API: immutable DTOs
       VerificationRequest.php  # subject, expected amount (minor), currency, destination, file
-      ExpectedDestination.php  # type (phone|instapay_handle|bank), value; unknown type throws
+      ExpectedDestination.php  # type (DestinationTypeEnum: phone|instapay_handle|bank), value
       VerificationResult.php   # status, verdict, per-check results, duplicate links, error (no extracted fields)
       CheckResult.php
       ExtractedFields.php      # what the parser read: amount, phone, handle, reference, per-field confidence
@@ -290,6 +290,9 @@ Modules/TransactionVerification/
       VerificationStatusEnum.php  # pending, processing, completed, failed
       VerdictEnum.php             # match, mismatch, duplicate, needs_review, unreadable
       CheckOutcomeEnum.php        # pass, fail, missing, not_applicable
+      CheckEnum.php               # amount, destination, duplicate, reference (the checks' keys)
+      DestinationTypeEnum.php     # phone, instapay_handle, bank
+      SecondEngineModeEnum.php    # always, fallback, off (anything else is always)
     Events/                    # PUBLIC API
       TransactionVerificationCompleted.php
     Services/                  # internal
@@ -367,8 +370,8 @@ gained `extracted`: what was read, with the phone, handle and account masked.
   module encrypts it before storing.)
 - `file`: an `UploadedFile` (a disk + path variant is added only if a caller ever needs it)
 - Validation: `subjectType`/`subjectId` 1–64 chars, `idempotencyKey` 1–255, `expectedAmountMinor` > 0,
-  `currency` 3 capital letters, destination type one of `phone|instapay_handle|bank` with a non-empty
-  value; anything else throws `InvalidArgumentException`
+  `currency` 3 capital letters, destination type a `DestinationTypeEnum` (PHP's types reject
+  anything else) with a non-empty value; other bad values throw `InvalidArgumentException`
 - `idempotencyKey`, `context` (free-form JSON, e.g. who uploaded it)
 
 ### Events

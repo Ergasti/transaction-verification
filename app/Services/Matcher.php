@@ -7,6 +7,7 @@ use Modules\TransactionVerification\Data\ExpectedDestination;
 use Modules\TransactionVerification\Data\ExtractedFields;
 use Modules\TransactionVerification\Enums\CheckEnum as Check;
 use Modules\TransactionVerification\Enums\CheckOutcomeEnum as Outcome;
+use Modules\TransactionVerification\Enums\DestinationTypeEnum;
 use Modules\TransactionVerification\Enums\VerdictEnum;
 
 /** Deterministic comparisons and the verdict. No model decides anything here. */
@@ -44,8 +45,8 @@ class Matcher
     public function normaliseDestination(ExpectedDestination $destination): string
     {
         return match ($destination->type) {
-            ExpectedDestination::PHONE => Phone::normalise($destination->value),
-            ExpectedDestination::INSTAPAY_HANDLE => mb_strtolower(trim($destination->value)),
+            DestinationTypeEnum::PHONE => Phone::normalise($destination->value),
+            DestinationTypeEnum::INSTAPAY_HANDLE => mb_strtolower(trim($destination->value)),
             default => trim($destination->value),
         };
     }
@@ -92,8 +93,8 @@ class Matcher
     private function destination(ExpectedDestination $expected, ExtractedFields $found): CheckResult
     {
         return match ($expected->type) {
-            ExpectedDestination::PHONE => $this->phone($expected->value, $found->phone),
-            ExpectedDestination::INSTAPAY_HANDLE => match (true) {
+            DestinationTypeEnum::PHONE => $this->phone($expected->value, $found->phone),
+            DestinationTypeEnum::INSTAPAY_HANDLE => match (true) {
                 filled($found->handle) => new CheckResult(
                     mb_strtolower(trim($found->handle)) === $this->normaliseDestination($expected) ? Outcome::PASS : Outcome::FAIL
                 ),
@@ -171,8 +172,8 @@ class Matcher
     private function destinationKey(ExpectedDestination $expected, ExtractedFields $found): string
     {
         return match (true) {
-            $expected->type === ExpectedDestination::BANK => 'account',
-            $expected->type === ExpectedDestination::INSTAPAY_HANDLE && filled($found->handle) => 'handle',
+            $expected->type === DestinationTypeEnum::BANK => 'account',
+            $expected->type === DestinationTypeEnum::INSTAPAY_HANDLE && filled($found->handle) => 'handle',
             default => 'phone',
         };
     }

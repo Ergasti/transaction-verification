@@ -1,6 +1,17 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.3.0
+
+**Breaking.** `ExpectedDestination`'s type is the new `DestinationTypeEnum` (`PHONE`, `INSTAPAY_HANDLE`, `BANK`);
+the `ExpectedDestination::PHONE` / `INSTAPAY_HANDLE` / `BANK` constants are gone.
+
+- Upgrading: `new ExpectedDestination(ExpectedDestination::PHONE, $phone)` becomes
+  `new ExpectedDestination(DestinationTypeEnum::PHONE, $phone)`; from a string, `DestinationTypeEnum::from($type)`
+  (an unknown string throws `ValueError`, not `InvalidArgumentException`; `tryFrom()` returns null instead).
+- Stored rows, the HTTP API (`expected_destination.type` stays `phone|instapay_handle|bank`) and duplicate
+  fingerprints are unchanged.
+
+## 0.2.0
 
 **Breaking.** The receipt is read straight from the upload and never stored.
 

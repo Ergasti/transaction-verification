@@ -19,6 +19,7 @@ use Modules\TransactionVerification\Contracts\TransactionVerifier;
 use Modules\TransactionVerification\Data\ExpectedDestination;
 use Modules\TransactionVerification\Data\ExtractedFields;
 use Modules\TransactionVerification\Data\VerificationRequest;
+use Modules\TransactionVerification\Enums\DestinationTypeEnum;
 use Modules\TransactionVerification\Enums\VerdictEnum;
 use Modules\TransactionVerification\Enums\VerificationStatusEnum;
 use Modules\TransactionVerification\Events\TransactionVerificationCompleted;
@@ -230,7 +231,7 @@ class SubmitVerificationTest extends TestCase
             subjectType: 'affiliate_payout',
             subjectId: 1,
             expectedAmountMinor: 200000,
-            expectedDestination: new ExpectedDestination(ExpectedDestination::PHONE, self::PHONE),
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE),
             file: UploadedFile::fake()->image('receipt.png'),
             idempotencyKey: 'other-amount',
         ));
@@ -249,7 +250,7 @@ class SubmitVerificationTest extends TestCase
             subjectType: 'affiliate_payout',
             subjectId: 1,
             expectedAmountMinor: 15000,
-            expectedDestination: new ExpectedDestination(ExpectedDestination::PHONE, self::PHONE),
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE),
             file: UploadedFile::fake()->image('receipt.png'),
             idempotencyKey: 'lost-point',
         ));
@@ -312,7 +313,7 @@ class SubmitVerificationTest extends TestCase
             subjectType: 'affiliate_payout',
             subjectId: 1,
             expectedAmountMinor: 307000,
-            expectedDestination: new ExpectedDestination(ExpectedDestination::PHONE, self::PHONE),
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE),
             file: UploadedFile::fake()->image('receipt.png'),
             idempotencyKey: 'broken',
             context: ['bad' => NAN],
@@ -815,7 +816,7 @@ class SubmitVerificationTest extends TestCase
             'attempts' => 1,
             'expected_amount_minor' => 307000,
             'currency' => 'EGP',
-            'expected_destination' => ['type' => ExpectedDestination::PHONE, 'value' => self::PHONE],
+            'expected_destination' => ['type' => DestinationTypeEnum::PHONE->value, 'value' => self::PHONE],
             'expected_destination_hash' => str_repeat('0', 64),
             'file_mime' => 'image/png',
             'file_size' => 1,
@@ -870,7 +871,7 @@ class SubmitVerificationTest extends TestCase
             subjectType: 'affiliate_payout',
             subjectId: $subjectId,
             expectedAmountMinor: 307000,
-            expectedDestination: new ExpectedDestination(ExpectedDestination::PHONE, self::PHONE),
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE),
             file: UploadedFile::fake()->image('receipt.png', $width, 1600),
             idempotencyKey: $key ?? "affiliate_payout:{$subjectId}",
         );

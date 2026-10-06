@@ -12,6 +12,7 @@ use Illuminate\Validation\ValidationException;
 use Modules\TransactionVerification\Data\ExpectedDestination;
 use Modules\TransactionVerification\Data\VerificationRequest;
 use Modules\TransactionVerification\Data\VerificationResult;
+use Modules\TransactionVerification\Enums\DestinationTypeEnum;
 use Modules\TransactionVerification\Services\TransactionVerificationService;
 
 /** Service-to-service API over the module's public interface. */
@@ -55,7 +56,7 @@ class VerificationController
                 'expected_amount_minor' => ['required', 'integer', 'min:1'],
                 'currency' => ['nullable', 'string', 'regex:/^[A-Z]{3}$/'],
                 'expected_destination' => ['required', 'array'],
-                'expected_destination.type' => ['required', 'string', 'in:'.implode(',', [ExpectedDestination::PHONE, ExpectedDestination::INSTAPAY_HANDLE, ExpectedDestination::BANK])],
+                'expected_destination.type' => ['required', 'string', 'in:'.implode(',', DestinationTypeEnum::values())],
                 'expected_destination.value' => ['required', 'string', 'max:255'],
                 'idempotency_key' => ['required', 'string', 'max:255'],
                 'context' => ['nullable', 'array'],
@@ -96,7 +97,7 @@ class VerificationController
                 subjectType: $data['subject_type'],
                 subjectId: $data['subject_id'],
                 expectedAmountMinor: $data['expected_amount_minor'],
-                expectedDestination: new ExpectedDestination($data['expected_destination']['type'], $data['expected_destination']['value']),
+                expectedDestination: new ExpectedDestination(DestinationTypeEnum::from($data['expected_destination']['type']), $data['expected_destination']['value']),
                 // Test mode: the file was written here, not uploaded through PHP.
                 file: new UploadedFile($tmp, 'receipt', $mime, UPLOAD_ERR_OK, true),
                 idempotencyKey: $data['idempotency_key'],

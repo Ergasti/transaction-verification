@@ -14,6 +14,7 @@ use Modules\TransactionVerification\Contracts\TransactionVerifier;
 use Modules\TransactionVerification\Data\ExpectedDestination;
 use Modules\TransactionVerification\Data\VerificationRequest;
 use Modules\TransactionVerification\Data\VerificationResult;
+use Modules\TransactionVerification\Enums\DestinationTypeEnum;
 use Modules\TransactionVerification\Http\Middleware\VerifyServiceCaller;
 use Modules\TransactionVerification\Models\TransactionVerification;
 use Spectator\Spectator;
@@ -437,7 +438,7 @@ class InternalApiTest extends TestCase
             subjectType: 'affiliate_payout',
             subjectId: $subjectId,
             expectedAmountMinor: 307000,
-            expectedDestination: new ExpectedDestination(ExpectedDestination::PHONE, '01000000001'),
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, '01000000001'),
             file: UploadedFile::fake()->image('receipt.png', 898, 1600),
             idempotencyKey: $key,
         ));

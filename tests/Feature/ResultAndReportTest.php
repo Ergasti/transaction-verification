@@ -15,6 +15,7 @@ use Modules\TransactionVerification\Contracts\TransactionVerifier;
 use Modules\TransactionVerification\Data\ExpectedDestination;
 use Modules\TransactionVerification\Data\ExtractedFields;
 use Modules\TransactionVerification\Data\VerificationRequest;
+use Modules\TransactionVerification\Enums\DestinationTypeEnum;
 use Modules\TransactionVerification\Enums\VerdictEnum;
 use Modules\TransactionVerification\Models\TransactionVerification;
 use Modules\TransactionVerification\Services\Ocr\TesseractEngine;
@@ -100,13 +101,13 @@ class ResultAndReportTest extends TestCase
         $this->reading(self::RECEIPT);
         $other = $this->verifier()->submit(new VerificationRequest(
             subjectType: 'invoice', subjectId: 7, expectedAmountMinor: 307000,
-            expectedDestination: new ExpectedDestination(ExpectedDestination::PHONE, '01000000001'),
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, '01000000001'),
             file: UploadedFile::fake()->image('receipt.png', 700, 1600), idempotencyKey: 'invoice:7',
         ))->uuid;
         // Another service may name the subject anything; a spreadsheet must not run it.
         $formula = $this->verifier()->submit(new VerificationRequest(
             subjectType: 'affiliate_payout', subjectId: '=HYPERLINK("http://x")', expectedAmountMinor: 307000,
-            expectedDestination: new ExpectedDestination(ExpectedDestination::PHONE, '01000000001'),
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, '01000000001'),
             file: UploadedFile::fake()->image('receipt.png', 701, 1600), idempotencyKey: 'formula',
         ))->uuid;
 
@@ -127,7 +128,7 @@ class ResultAndReportTest extends TestCase
         foreach (["\u{FF1D}HYPERLINK(\"http://x\")", "\n=1+1"] as $i => $subject) {
             $this->verifier()->submit(new VerificationRequest(
                 subjectType: 'affiliate_payout', subjectId: $subject, expectedAmountMinor: 307000,
-                expectedDestination: new ExpectedDestination(ExpectedDestination::PHONE, '01000000001'),
+                expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, '01000000001'),
                 file: UploadedFile::fake()->image('receipt.png', 710 + $i, 1600), idempotencyKey: "formula-{$i}",
             ));
         }
@@ -187,7 +188,7 @@ class ResultAndReportTest extends TestCase
             subjectType: 'affiliate_payout',
             subjectId: 1,
             expectedAmountMinor: 307000,
-            expectedDestination: new ExpectedDestination(ExpectedDestination::INSTAPAY_HANDLE, 'creator0x@instapay'),
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::INSTAPAY_HANDLE, 'creator0x@instapay'),
             file: UploadedFile::fake()->image('receipt.png', 898, 1600),
             idempotencyKey: 'affiliate_payout:1',
         ));
@@ -293,7 +294,7 @@ class ResultAndReportTest extends TestCase
             subjectType: 'affiliate_payout',
             subjectId: $subjectId,
             expectedAmountMinor: 307000,
-            expectedDestination: new ExpectedDestination(ExpectedDestination::PHONE, '01000000001'),
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, '01000000001'),
             file: UploadedFile::fake()->image('receipt.png', 897 + $subjectId, 1600),
             idempotencyKey: $key,
         );

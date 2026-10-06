@@ -7,22 +7,16 @@ use InvalidArgumentException;
 use Modules\TransactionVerification\Data\ExpectedDestination;
 use Modules\TransactionVerification\Data\VerificationRequest;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Modules\TransactionVerification\Enums\DestinationTypeEnum;
 use Modules\TransactionVerification\Tests\TestCase;
 
 class DataValidationTest extends TestCase
 {
-    public function test_an_unknown_destination_type_is_rejected(): void
-    {
-        $this->expectException(InvalidArgumentException::class);
-
-        new ExpectedDestination('bank_account', '1234');
-    }
-
     public function test_an_empty_destination_value_is_rejected(): void
     {
         $this->expectException(InvalidArgumentException::class);
 
-        new ExpectedDestination(ExpectedDestination::PHONE, '  ');
+        new ExpectedDestination(DestinationTypeEnum::PHONE, '  ');
     }
 
     /** @return array<string, array{string, string|int, string, int, string}> */
@@ -49,7 +43,7 @@ class DataValidationTest extends TestCase
             $subjectType,
             $subjectId,
             $amount,
-            new ExpectedDestination(ExpectedDestination::PHONE, '01000000001'),
+            new ExpectedDestination(DestinationTypeEnum::PHONE, '01000000001'),
             UploadedFile::fake()->image('r.png'),
             $key,
             currency: $currency,
