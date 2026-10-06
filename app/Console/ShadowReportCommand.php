@@ -10,8 +10,10 @@ use Modules\TransactionVerification\Models\TransactionVerification;
 /** Shadow mode: one CSV line per payout check, to label by hand against the accuracy gate. Outcomes only, no values. */
 class ShadowReportCommand extends Command
 {
+    private const DEFAULT_DAYS = 14;
+
     protected $signature = 'transaction-verification:shadow-report
-        {--since= : Y-m-d, default 14 days ago}';
+        {--since= : Y-m-d, default '.self::DEFAULT_DAYS.' days ago}';
 
     protected $description = 'List payout receipt checks as CSV, with an empty label column.';
 
@@ -26,7 +28,7 @@ class ShadowReportCommand extends Command
             return self::FAILURE;
         }
 
-        $since = $sinceOption === null ? now()->subDays(14) : Carbon::createFromFormat('!Y-m-d', $sinceOption);
+        $since = $sinceOption === null ? now()->subDays(self::DEFAULT_DAYS) : Carbon::createFromFormat('!Y-m-d', $sinceOption);
 
         $checks = [CheckEnum::AMOUNT->value, CheckEnum::DESTINATION->value, CheckEnum::DUPLICATE->value];
 
