@@ -81,10 +81,32 @@ No port needs publishing; the app reaches it on the compose network. Down or slo
 approved.
 
 - **Keep the image version equal to the package version** (`composer show ergasti/transaction-verification`).
-- **The image is private:** each server logs in once with a token that can only read packages (`read:packages`):
-  `echo <token> | docker login ghcr.io -u <user> --password-stdin`.
+- **The image is private:** each server logs in once (see [Pulling the OCR image](#pulling-the-ocr-image) below).
 - **Fallback:** `build: ./vendor/ergasti/transaction-verification/ocr-sidecar` instead of `image:` (needs internet for
   the build, ~1 GB).
+
+#### Pulling the OCR image
+
+The image is private, so GitHub hands it only to a logged-in server. Do this **once per server**:
+
+1. **Make a token** on GitHub: Settings → Developer settings → Personal access tokens → **Tokens (classic)** →
+   Generate new token. Tick **only `read:packages`** (it can download packages and nothing else). Prefer an
+   account meant for servers (a bot account in the Ergasti org) over a person's, so it survives people leaving.
+   Give it an expiry you will notice, and note where it is used.
+2. **Log in on the server**, as the user that runs `docker compose`:
+   ```bash
+   echo <token> | docker login ghcr.io -u <github-username> --password-stdin
+   ```
+   It prints `Login Succeeded`. Piping the token keeps it out of the shell history; Docker stores the login, so
+   later pulls just work.
+3. **Pull and start it:** `docker compose pull ocr_rapid && docker compose up -d ocr_rapid`, then check
+   `docker compose ps ocr_rapid` shows **healthy**.
+
+- **Skipped or expired login:** the pull fails with `denied` / `unauthorized` and the container doesn't start (an
+  already running one keeps running). Payouts are unaffected: without the second engine, receipts go to a person,
+  never to a wrong match. Log in and pull again.
+- **Rotating the token:** make a new one, run the same `docker login` with it, then revoke the old one. Nothing else
+  changes.
 
 **6. Keep running:** the scheduler (it recovers rows whose queue job was lost, every 5 minutes) and a queue worker on
 `TRANSACTION_VERIFICATION_QUEUE`.
