@@ -14,11 +14,13 @@ use Modules\TransactionVerification\Enums\VerdictEnum;
 class Matcher
 {
     /**
+     * @param  list<ExpectedDestination>  $expected  the primary first, then the alternatives
      * @param  list<array{id: int, uuid: string, method: string}>  $duplicates
      * @return array{verdict: VerdictEnum, checks: array<string, CheckResult>, confidence: ?float}
      */
-    public function decide(int $expectedAmountMinor, ExpectedDestination $expected, ExtractedFields $found, array $duplicates, float $threshold): array
+    public function decide(int $expectedAmountMinor, array $expected, ExtractedFields $found, array $duplicates, float $threshold): array
     {
+        $expected = $this->decisive($expected, $found);
         $checks = [
             Check::AMOUNT->value => $this->amount($expectedAmountMinor, $found->amountMinor),
             Check::DESTINATION->value => $this->destination($expected, $found),
@@ -87,7 +89,10 @@ class Matcher
             return new CheckResult(Outcome::MISSING, ['expected' => $expected]);
         }
 
-        return new CheckResult($found === $expected ? Outcome::PASS : Outcome::FAIL, ['expected' => $expected, 'found' => $found]);
+        // Banks send whole pounds: 17,906.59 arrives as 17,906. Dropped piastres pass; rounding up does not.
+        $pass = $found === $expected || $found === $expected - $expected % 100;
+
+        return new CheckResult($pass ? Outcome::PASS : Outcome::FAIL, ['expected' => $expected, 'found' => $found]);
     }
 
     private function destination(ExpectedDestination $expected, ExtractedFields $found): CheckResult
@@ -146,19 +151,49 @@ class Matcher
         return preg_match('/^0?1\d{9}$/', $digits) === 1;
     }
 
-    /** Fallback mode asks the second engine unless the amount and the destination are read, at or above $threshold. */
-    public function sure(ExpectedDestination $expected, ExtractedFields $found, float $threshold): bool
+    /**
+     * Fallback mode asks the second engine unless the amount and the destination are read, at or above $threshold.
+     *
+     * @param  list<ExpectedDestination>  $expected
+     */
+    public function sure(array $expected, ExtractedFields $found, float $threshold): bool
     {
+        $expected = $this->decisive($expected, $found);
         $destination = ['phone' => $found->phone, 'handle' => $found->handle, 'account' => $found->account][$this->destinationKey($expected, $found)];
         $confidence = $this->decidingConfidence($expected, $found);
 
         return $found->amountMinor !== null && filled($destination) && ($confidence === null || $confidence >= $threshold);
     }
 
-    /** @return list<string> the confidence keys of the fields that decide the verdict: the amount and the destination */
-    public function decidingKeys(ExpectedDestination $expected, ExtractedFields $found): array
+    /**
+     * @param  list<ExpectedDestination>  $expected
+     * @return list<string> the confidence keys of the fields that decide the verdict: the amount and the destination
+     */
+    public function decidingKeys(array $expected, ExtractedFields $found): array
     {
-        return ['amount', $this->destinationKey($expected, $found)];
+        return ['amount', $this->destinationKey($this->decisive($expected, $found), $found)];
+    }
+
+    /**
+     * The destination that decides: the best outcome wins (pass, then fail, then not applicable, then missing), the
+     * earlier one on a tie. A fail outranks "not applicable": a phone that differs is evidence, a missing IBAN is not.
+     *
+     * @param  list<ExpectedDestination>  $expected
+     */
+    private function decisive(array $expected, ExtractedFields $found): ExpectedDestination
+    {
+        $rank = [Outcome::PASS->value => 0, Outcome::FAIL->value => 1, Outcome::NOT_APPLICABLE->value => 2, Outcome::MISSING->value => 3];
+        $best = null;
+
+        foreach ($expected as $destination) {
+            $score = $rank[$this->destination($destination, $found)->outcome->value];
+
+            if ($best === null || $score < $best[0]) {
+                $best = [$score, $destination];
+            }
+        }
+
+        return $best[1];
     }
 
     /** Lowest confidence among the fields that decide the verdict; a field without a score counts as certain. */

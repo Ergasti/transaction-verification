@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
+- `VerificationRequest` takes optional `alternativeDestinations`: other places the money may rightly have gone. The
+  receipt passes on any of them (e.g. a bank account paid by InstaPay to the payee's phone). Rows stored by 0.4 keep
+  working. The blind index still covers only `expectedDestination`.
+- The amount also passes with the piastres dropped (17,906.59 expected, 17,906 read), since banks send whole pounds;
+  rounding up still fails. This changes verdicts for such receipts from `mismatch` to `match`.
+
 ## 0.4.1
 
 - Laravel 11 is supported next to 12 (`laravel/framework: ^11.0|^12.0`); the test suite runs on both.

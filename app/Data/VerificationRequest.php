@@ -7,6 +7,11 @@ use Illuminate\Http\UploadedFile;
 /** What a caller submits: the receipt plus the values it should show. */
 final readonly class VerificationRequest
 {
+    /**
+     * @param  list<ExpectedDestination>  $alternativeDestinations  other places the money may rightly have gone (e.g. the
+     *                                                              phone a bank account is reachable by on InstaPay); the
+     *                                                              receipt passes on any of them
+     */
     public function __construct(
         public string $subjectType,
         public string|int $subjectId,
@@ -17,6 +22,7 @@ final readonly class VerificationRequest
         public ?int $merchantId = null,
         public string $currency = 'EGP',
         public array $context = [],
+        public array $alternativeDestinations = [],
     ) {
         // Column widths: a non-strict MySQL connection would silently truncate, and truncated keys collide.
         foreach (['subjectType' => [$subjectType, 64], 'subjectId' => [(string) $subjectId, 64], 'idempotencyKey' => [$idempotencyKey, 255]] as $name => [$value, $max]) {
@@ -27,6 +33,12 @@ final readonly class VerificationRequest
 
         if ($expectedAmountMinor <= 0 || ! preg_match('/^[A-Z]{3}\z/', $currency)) {
             throw new \InvalidArgumentException('expectedAmountMinor must be positive and currency a 3-letter code.');
+        }
+
+        foreach ($alternativeDestinations as $alternative) {
+            if (! $alternative instanceof ExpectedDestination) {
+                throw new \InvalidArgumentException('alternativeDestinations holds ExpectedDestination objects only.');
+            }
         }
     }
 }

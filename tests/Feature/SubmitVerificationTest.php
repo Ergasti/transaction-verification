@@ -796,6 +796,43 @@ class SubmitVerificationTest extends TestCase
         $this->assertNull($this->verifier()->latestFor('affiliate_payout', 999));
     }
 
+    public function test_an_alternative_destination_is_stored_and_decides(): void
+    {
+        // A bank account the payee also reaches by phone on InstaPay: the receipt shows only the phone.
+        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE));
+
+        $result = $this->verifier()->submit(new VerificationRequest(
+            subjectType: 'affiliate_payout',
+            subjectId: 1,
+            expectedAmountMinor: 307000,
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::BANK, 'EG38 0019 0005 0000 0000 0000 0010'),
+            file: UploadedFile::fake()->image('receipt.png', 898, 1600),
+            idempotencyKey: 'affiliate_payout:1',
+            alternativeDestinations: [new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE)],
+        ));
+
+        $this->assertSame(VerdictEnum::MATCH, $result->verdict);
+        $this->assertSame(
+            [['type' => 'phone', 'value' => self::PHONE]],
+            TransactionVerification::where('uuid', $result->uuid)->first()->expected_destination['alternatives'],
+        );
+    }
+
+    public function test_a_row_from_before_alternatives_is_still_decided_again(): void
+    {
+        $original = $this->readingRow(subjectId: 1);
+        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
+        $copy = $this->verifier()->submit($this->request(subjectId: 2));
+        // Stored by 0.4: no alternatives key.
+        TransactionVerification::where('uuid', $copy->uuid)->first()->update(['expected_destination' => ['type' => 'phone', 'value' => self::PHONE]]);
+        $original->update(['reference_hash' => TransactionVerification::where('uuid', $copy->uuid)->value('reference_hash')]);
+
+        $this->travel(16)->minutes();
+        app(TransactionVerificationService::class)->failStale();
+
+        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy->uuid)->verdict);
+    }
+
     private function stuckRow(): TransactionVerification
     {
         $result = $this->verifier()->submit($this->request());

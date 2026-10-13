@@ -58,7 +58,11 @@ class TransactionVerificationService implements TransactionVerifier
                 'attempts' => 1,
                 'expected_amount_minor' => $request->expectedAmountMinor,
                 'currency' => $request->currency,
-                'expected_destination' => ['type' => $destination->type->value, 'value' => $destination->value],
+                'expected_destination' => [
+                    'type' => $destination->type->value,
+                    'value' => $destination->value,
+                    'alternatives' => array_map(fn (ExpectedDestination $d) => ['type' => $d->type->value, 'value' => $d->value], $request->alternativeDestinations),
+                ],
                 'expected_destination_hash' => $this->blindIndex($destination->type->value.':'.$this->matcher->normaliseDestination($destination)),
                 'file_mime' => (string) $file->getMimeType(),
                 'file_size' => (int) $file->getSize(),
@@ -236,7 +240,7 @@ class TransactionVerificationService implements TransactionVerifier
     {
         $mode = SecondEngineModeEnum::current();
         $threshold = (float) config('transaction-verification.confidence_threshold');
-        $expected = new ExpectedDestination(DestinationTypeEnum::from($row->expected_destination['type']), $row->expected_destination['value']);
+        $expected = $this->expectedDestinations($row);
 
         if ($mode === SecondEngineModeEnum::OFF || ($mode === SecondEngineModeEnum::FALLBACK && $this->matcher->sure($expected, $fields, $threshold))) {
             return [$fields, null, 0];
@@ -296,7 +300,7 @@ class TransactionVerificationService implements TransactionVerifier
             return false;
         }
 
-        $expected = new ExpectedDestination(DestinationTypeEnum::from($row->expected_destination['type']), $row->expected_destination['value']);
+        $expected = $this->expectedDestinations($row);
         $threshold = (float) config('transaction-verification.confidence_threshold');
 
         // The reference too: it finds a receipt reused for another payout, so fewer passes must not lose it.
@@ -374,13 +378,22 @@ class TransactionVerificationService implements TransactionVerifier
     {
         $decision = $this->matcher->decide(
             $row->expected_amount_minor,
-            new ExpectedDestination(DestinationTypeEnum::from($row->expected_destination['type']), $row->expected_destination['value']),
+            $this->expectedDestinations($row),
             $fields,
             $this->duplicates->find($row, $referenceHash),
             (float) config('transaction-verification.confidence_threshold'),
         );
 
         return [...$decision, 'checks' => array_map(fn (CheckResult $check) => $check->toArray(), $decision['checks'])];
+    }
+
+    /** @return list<ExpectedDestination> the primary first; rows from before 0.5 have no alternatives */
+    private function expectedDestinations(TransactionVerification $row): array
+    {
+        return array_map(
+            fn (array $d) => new ExpectedDestination(DestinationTypeEnum::from($d['type']), $d['value']),
+            [$row->expected_destination, ...($row->expected_destination['alternatives'] ?? [])],
+        );
     }
 
     private function completedEvent(TransactionVerification $row, array $decision): TransactionVerificationCompleted

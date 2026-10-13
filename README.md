@@ -112,6 +112,9 @@ The first rule that applies wins:
 | `needs_review` | Both match, but the destination can't be confirmed (e.g. a handle was expected and only a phone is shown, or a bank account's digits differ) or a deciding field is unsure, including one that differs but the two engines read differently; a person decides |
 | `match` | Amount and destination read with confidence, by both engines, and equal to what was expected |
 
+The amount also matches with the piastres dropped (17,906.59 expected, 17,906 on the receipt), since banks send
+whole pounds. Rounded up (17,907) it does not.
+
 None of them blocks anything: `unreadable`, `mismatch` and `needs_review` all mean "a person should look".
 
 `submit()` returns the finished result: `completed` with a verdict, or `failed` (unreadable file, an engine error) for
@@ -129,6 +132,12 @@ binding, so check `app()->bound(...)` and skip quietly.
 | `find(uuid)` / `latestFor(subjectType, subjectId)` | The result, or null |
 
 A result's `extracted` holds what was read, masked: phone `********001`, account `****0010`, handle `so***@instapay`.
+
+**More than one place the money may rightly go:** pass the others as `alternativeDestinations`, and the receipt
+passes on any of them. For example, a payee's bank account is also reachable by their phone on InstaPay, so a
+receipt that shows only that phone is still right. Send the account as `expectedDestination` and the phone as an
+alternative. The best outcome decides: a match on any of them beats a phone that differs, and a phone that differs
+beats a missing account number.
 
 `TransactionVerificationCompleted` (uuid, subject, verdict, checks; never a phone) fires each time a check stores
 a verdict, and again for another subject's receipt that becomes a `duplicate` because its original was checked later.

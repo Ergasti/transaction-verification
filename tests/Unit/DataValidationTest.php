@@ -49,4 +49,19 @@ class DataValidationTest extends TestCase
             currency: $currency,
         );
     }
+
+    public function test_an_alternative_destination_must_be_a_destination(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new VerificationRequest(
+            subjectType: 'affiliate_payout',
+            subjectId: 1,
+            expectedAmountMinor: 205000,
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, '01000000001'),
+            file: UploadedFile::fake()->image('r.png'),
+            idempotencyKey: 'key',
+            alternativeDestinations: ['01000000002'],
+        );
+    }
 }
