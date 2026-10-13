@@ -159,6 +159,21 @@ class MatcherTest extends TestCase
         $this->assertSame($verdict, (new Matcher)->decide(self::AMOUNT, $expected, $found, [], 0.80)['verdict']);
     }
 
+    public function test_the_confidence_comes_from_the_destination_that_matched(): void
+    {
+        $decision = (new Matcher)->decide(
+            self::AMOUNT,
+            [new ExpectedDestination(DestinationTypeEnum::BANK, 'EG38 0019 0005 0000 0000 0000 0010'), new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE)],
+            new ExtractedFields(amountMinor: self::AMOUNT, phone: self::PHONE, confidence: ['phone' => 0.5, 'account' => 1.0]),
+            [],
+            0.80,
+        );
+
+        // Only the phone's score: the account was never read, so its 1.0 must not count.
+        $this->assertSame(0.5, $decision['confidence']);
+        $this->assertSame(VerdictEnum::NEEDS_REVIEW, $decision['verdict']);
+    }
+
     public function test_the_primary_decides_a_tie(): void
     {
         $both = new ExtractedFields(amountMinor: self::AMOUNT, phone: self::PHONE, handle: 'creator@instapay');

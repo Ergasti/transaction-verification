@@ -113,7 +113,7 @@ The first rule that applies wins:
 | `match` | Amount and destination read with confidence, by both engines, and equal to what was expected |
 
 The amount also matches with the piastres dropped (17,906.59 expected, 17,906 on the receipt), since banks send
-whole pounds. Rounded up (17,907) it does not.
+whole pounds. Rounded up (17,907) it does not. The rule assumes a currency with 2 decimals, like EGP.
 
 None of them blocks anything: `unreadable`, `mismatch` and `needs_review` all mean "a person should look".
 

@@ -5,8 +5,13 @@
 - `VerificationRequest` takes optional `alternativeDestinations`: other places the money may rightly have gone. The
   receipt passes on any of them (e.g. a bank account paid by InstaPay to the payee's phone). Rows stored by 0.4 keep
   working. The blind index still covers only `expectedDestination`.
+  - With alternatives, the best outcome decides, so some verdicts move: a phone that differs from an alternative phone
+    is a `mismatch`, and a missing account number next to an unread phone is `needs_review` (it was `unreadable`).
+  - In `second_engine` `fallback` mode, a phone read surely that differs counts as sure, so RapidOCR is not asked.
+    The default `always` mode reads every receipt with both engines and is unaffected.
 - The amount also passes with the piastres dropped (17,906.59 expected, 17,906 read), since banks send whole pounds;
-  rounding up still fails. This changes verdicts for such receipts from `mismatch` to `match`.
+  rounding up still fails. Such receipts move from `mismatch` (or `needs_review` when the amount was read unsurely) to
+  `match`. The rule assumes a currency with 2 decimals, like EGP.
 
 ## 0.4.1
 
