@@ -30,6 +30,20 @@ class ReceiptRouterTest extends TestCase
         $this->assertSame([ReceiptFormatEnum::ALEXBANK, 307000, '01000000001'], [$fields->format, $fields->amountMinor, $fields->phone]);
     }
 
+    public function test_a_whole_alexbank_confirmation_in_either_layout_goes_to_the_alexbank_parser(): void
+    {
+        // Its "CASH TRANSFER" sits right above "AMOUNT": that is not InstaPay's "Transfer Amount".
+        $tesseract = AlexBankReceiptParserTest::confirmation('3,070.00', '00201000000001');
+        $rapid = "ALEXBANK\nPAY SOMEONE\nCUSTOMER NAME\nACCOUNT\n900000000001\nMOBILE WALLET NUMBER\n00201000000001\n"
+            ."PAYMENT TYPE\nPURPOSE OF TRANSFER\nMobile wallet\nCASH TRANSFER\nAMOUNT\nFEE\n3,070.00 EGP\n100.00 EGP\nEXECUTION DATE";
+
+        foreach ([$tesseract, $rapid] as $text) {
+            $fields = (new ReceiptRouter)->parse($text);
+
+            $this->assertSame([ReceiptFormatEnum::ALEXBANK, 307000, '01000000001', null], [$fields->format, $fields->amountMinor, $fields->phone, $fields->reference]);
+        }
+    }
+
     public function test_instapay_is_asked_first(): void
     {
         // A transfer sent from an AlexBank account can show the sender's bank by name.

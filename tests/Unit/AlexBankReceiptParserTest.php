@@ -107,6 +107,11 @@ class AlexBankReceiptParserTest extends TestCase
     {
         return [
             'a letter for a digit' => ['1O,384.00'],
+            // A leading 1 read as I, l or |: the digits after it must not pass for 384.00.
+            'a leading 1 read as I' => ['I0,384.00'],
+            'a leading 1 read as l' => ['l0,384.00'],
+            'a leading 1 read as a bar' => ['|0,384.00'],
+            'a zero' => ['0.00'],
             'no piastres' => ['10,384'],
             'a misread separator' => ['10,384,00'],
         ];
@@ -126,6 +131,22 @@ class AlexBankReceiptParserTest extends TestCase
         $text = "PAY SOMEONE\nMOBILE WALLET NUMBER\n00201000000001\nAMOUNT FEE\n100.00 EGP\nEXECUTION DATE";
 
         $this->assertNull($this->parse($text)->amountMinor);
+    }
+
+    public function test_a_fee_followed_by_a_date_is_never_the_amount(): void
+    {
+        // RapidOCR's layout with the amount line and the next label lost: what is left is the fee, then the date.
+        $text = "PAY SOMEONE\nMOBILE WALLET NUMBER\n00201000000001\nAMOUNT\nFEE\n100.00 EGP\n17/02/2025";
+
+        $this->assertNull($this->parse($text)->amountMinor);
+    }
+
+    public function test_a_phone_shaped_number_outside_the_wallet_field_is_never_the_wallet(): void
+    {
+        $sender = str_replace('900000000001', '01000000002', self::confirmation('3,070.00', '00201000000001'));
+
+        $this->assertSame('01000000001', $this->parse($sender)->phone);
+        $this->assertNull($this->parse(str_replace('00201000000001', '', $sender))->phone);
     }
 
     public function test_a_confirmation_missed_whole_reads_no_sum(): void
@@ -165,7 +186,7 @@ class AlexBankReceiptParserTest extends TestCase
     }
 
     /** One confirmation as Tesseract lays it out: label rows with their values on the next line. Synthetic values. */
-    private static function confirmation(string $amount, string $wallet, string $fee = '100.00'): string
+    public static function confirmation(string $amount, string $wallet, string $fee = '100.00'): string
     {
         return "ALEXBANK\nOBJECT DATE AND HOUR\nPAY SOMEONE 17/02/2025 19:53:17\nSTATUS\nEXECUTED\n"
             ."Your order of Pay someone is confirmed as follows:\nCUSTOMER NAME ACCOUNT\n900000000001 SENDER CO\n"

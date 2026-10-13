@@ -835,7 +835,8 @@ class SubmitVerificationTest extends TestCase
 
     public function test_an_alexbank_confirmation_is_checked_and_its_format_kept(): void
     {
-        $this->reading("ALEXBANK\nPAY SOMEONE\nBENEFICIARY NAME MOBILE WALLET NUMBER\nPAYEE 0020".substr(self::PHONE, 1)."\nAMOUNT FEE\n3,070.00 EGP 100.00 EGP\nEXECUTION DATE");
+        $this->reading("ALEXBANK\nPAY SOMEONE\nCUSTOMER NAME ACCOUNT\n900000000001 SENDER CO\nBENEFICIARY NAME MOBILE WALLET NUMBER\n"
+            ."PAYEE 0020".substr(self::PHONE, 1)."\nPAYMENT TYPE PURPOSE OF TRANSFER\nMobile wallet CASH TRANSFER\nAMOUNT FEE\n3,070.00 EGP 100.00 EGP\nEXECUTION DATE");
 
         $result = $this->verifier()->submit($this->request());
 

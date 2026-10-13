@@ -53,10 +53,13 @@ class InstaPayReceiptParser implements ReceiptParser, RecognisesReceipts
         private readonly DateParser $dates,
     ) {}
 
-    /** Its amount label, or an InstaPay address: either alone is enough. */
+    /**
+     * Its amount label, or an InstaPay address: either alone is enough. The label on one line only: AlexBank's
+     * "CASH TRANSFER" sits right above its "AMOUNT" label.
+     */
     public function recognises(string $text): bool
     {
-        return preg_match('/Transfer\s+Amount|المحول/iu', $text) === 1 || preg_match(self::HANDLE, $text) === 1;
+        return preg_match('/Transfer\h+Amount|المحول/iu', $text) === 1 || preg_match(self::HANDLE, $text) === 1;
     }
 
     /** @return array<string, mixed> the fields one pass could read */
