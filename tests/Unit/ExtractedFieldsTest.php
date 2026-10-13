@@ -75,4 +75,12 @@ class ExtractedFieldsTest extends TestCase
         $this->assertSame(ReceiptFormatEnum::INSTAPAY, $ours->confirmedBy(new ExtractedFields(amountMinor: 307000))->format);
         $this->assertSame(ReceiptFormatEnum::INSTAPAY, $ours->filledFrom(new ExtractedFields(amountMinor: 307000), 0.9)->format);
     }
+
+    public function test_fallback_takes_the_second_readings_format_when_ours_knew_no_layout(): void
+    {
+        $theirs = new ExtractedFields(amountMinor: 307000, format: ReceiptFormatEnum::ALEXBANK);
+
+        $this->assertSame(ReceiptFormatEnum::ALEXBANK, (new ExtractedFields(format: ReceiptFormatEnum::UNRECOGNISED))->filledFrom($theirs, 0.9)->format);
+        $this->assertSame(ReceiptFormatEnum::INSTAPAY, (new ExtractedFields(format: ReceiptFormatEnum::INSTAPAY))->filledFrom($theirs, 0.9)->format);
+    }
 }

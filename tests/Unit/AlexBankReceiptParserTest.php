@@ -112,6 +112,11 @@ class AlexBankReceiptParserTest extends TestCase
             'a leading 1 read as l' => ['l0,384.00'],
             'a leading 1 read as a bar' => ['|0,384.00'],
             'a zero' => ['0.00'],
+            // The 1 lost, or split off as its own token: never 384.00.
+            'the leading 1 lost' => ['0,384.00'],
+            'the leading 1 split off as I' => ['I 0,384.00'],
+            'the leading 1 split off as a bar' => ['| 0,384.00'],
+            'a leading zero, no comma' => ['0384.00'],
             'no piastres' => ['10,384'],
             'a misread separator' => ['10,384,00'],
         ];
@@ -139,6 +144,36 @@ class AlexBankReceiptParserTest extends TestCase
         $text = "PAY SOMEONE\nMOBILE WALLET NUMBER\n00201000000001\nAMOUNT\nFEE\n100.00 EGP\n17/02/2025";
 
         $this->assertNull($this->parse($text)->amountMinor);
+    }
+
+    public function test_a_fee_followed_by_a_later_number_is_never_the_amount(): void
+    {
+        $text = "PAY SOMEONE\nMOBILE WALLET NUMBER\n00201000000001\nAMOUNT\nFEE\n100.00 EGP\nINV 2025";
+
+        $this->assertNull($this->parse($text)->amountMinor);
+    }
+
+    public function test_a_misread_fee_still_lets_the_amount_through(): void
+    {
+        // A real pass read the fee "100.00" as "100,00": the amount next to it is still right.
+        $this->assertSame(307000, $this->parse(self::confirmation('3,070.00', '00201000000001', '100,00'))->amountMinor);
+    }
+
+    public function test_a_confirmation_counted_by_any_of_its_labels_keeps_a_partial_stack_unread(): void
+    {
+        // The second confirmation's marker read in title case, its amount and wallet lost: the first's alone is no sum.
+        $text = "ALEXBANK\nPay Someone 17/02/2025\nSTATUS\nEXECUTED\nBENEFICIARY NAME MOBILE WALLET NUMBER\nPAYEE 00201000000001\n"
+            ."AMOUNT FEE\n50,000.00 EGP 100.00 EGP\nPay Someone 17/02/2025\nSTATUS\nEXECUTED\n";
+
+        $fields = $this->parse($text);
+
+        $this->assertSame([null, null], [$fields->amountMinor, $fields->phone]);
+    }
+
+    public function test_the_sentence_repeating_pay_someone_is_not_a_confirmation(): void
+    {
+        // confirmation() holds both "PAY SOMEONE" and "Your order of Pay someone is confirmed": one transfer, not two.
+        $this->assertSame(307000, $this->parse(self::confirmation('3,070.00', '00201000000001'))->amountMinor);
     }
 
     public function test_a_phone_shaped_number_outside_the_wallet_field_is_never_the_wallet(): void

@@ -26,8 +26,10 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
     // Printed labels, any one of them: the logo is an image and a bank may rename one label.
     private const SIGNALS = '/ALEXBANK|PAY\s+SOMEONE|BENEFICIARY\s+NAME|MOBILE\s+WALLET\s+NUMBER/i';
 
-    // One confirmation each. Upper case only: the sentence "Your order of Pay someone is confirmed" repeats it.
-    private const TRANSFER = '/\bPAY SOMEONE\b/';
+    // Labels that start a line once per confirmation, in any case: the stack's size is the most any of them (or the
+    // amounts, or the wallets) counts, so one misread label can't hide a confirmation and leave a partial sum. At a line
+    // start only: the sentence "Your order of Pay someone is confirmed" repeats one of them.
+    private const PER_TRANSFER = ['/^PAY\s+SOMEONE\b/im', '/^OBJECT\b/im', '/^TRANSACTION\s+DETAILS\b/im', '/^BENEFICIARY\s+NAME\b/im'];
 
     // The AMOUNT | FEE label row, with RapidOCR's misreads ("AVOUNT") of the first. Upper case only: "Marketing Fees"
     // and the footer's "fee" are text. The values follow in label order, amount first, on one line (Tesseract) or
@@ -48,9 +50,13 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
     // amount is unread rather than read short ("0,384.00"); a date ("17/02/2025") gives none either.
     private const NUMBER = '/(?<!\S)\d[\d.,]*(?!\S)/';
 
-    // The amount is printed with its piastres ("10,384.00"). A garbled one ("1O,384.00" read as "1") must not pass for
-    // a smaller amount: anything else is unread. The fee only has to be there.
-    private const MONEY = '/^(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}$/';
+    // The amount is printed with its piastres ("10,384.00") and never starts with a zero: "0,384.00" is a 10,384.00 that
+    // lost its 1, not 384. Anything else is unread, never read as a smaller amount.
+    private const MONEY = '/^(?:[1-9]\d{0,2}(?:,\d{3})+|[1-9]\d*)\.\d{2}$/';
+
+    // The fee next to it only has to look like money, misread separator and all ("100,00"): with its amount line lost,
+    // the fee must not pair with some later number ("2025") and pass for the amount.
+    private const FEE = '/^\d[\d.,]*[.,]\d{2}$/';
 
     public function __construct(
         private readonly AmountParser $amounts,
@@ -71,7 +77,8 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
 
         $amounts = $this->amounts($lines);
         $wallets = $this->wallets($lines);
-        $transfers = max(preg_match_all(self::TRANSFER, implode("\n", $lines)), count($amounts), count($wallets));
+        $text = implode("\n", $lines);
+        $transfers = max(count($amounts), count($wallets), ...array_map(fn (string $label) => preg_match_all($label, $text), self::PER_TRANSFER));
 
         return [
             // A missed or unreadable amount would make the sum wrong, not short: no amount then.
@@ -111,7 +118,9 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
             // Both values read, or a label line with no number: the row is over.
             if (count($numbers) >= 2 || $m[0] === []) {
                 // ?: a zero is a lost amount, never a payout.
-                $amounts[] = count($numbers) >= 2 && preg_match(self::MONEY, $numbers[0]) ? ($this->amounts->parse($numbers[0]) ?: false) : false;
+                $amounts[] = count($numbers) >= 2 && preg_match(self::MONEY, $numbers[0]) && preg_match(self::FEE, $numbers[1])
+                    ? ($this->amounts->parse($numbers[0]) ?: false)
+                    : false;
                 $numbers = null;
             }
         }

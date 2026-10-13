@@ -61,6 +61,10 @@ final readonly class ExtractedFields
         }
 
         $ours['currency'] ??= $ours['amount_minor'] === null ? null : $theirs['currency'];
+        // Read as the second engine read it when ours knew no layout: the format says which parser the fields came from.
+        if (in_array($ours['format'], [null, ReceiptFormatEnum::UNRECOGNISED->value], true) && $theirs['format'] !== null) {
+            $ours['format'] = $theirs['format'];
+        }
 
         return self::fromArray($ours);
     }
