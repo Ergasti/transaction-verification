@@ -5,6 +5,7 @@ namespace Modules\TransactionVerification\Tests\Unit;
 use Carbon\CarbonImmutable;
 use Modules\TransactionVerification\Data\ExtractedFields;
 use Modules\TransactionVerification\Services\Parsers\InstaPayReceiptParser;
+use Modules\TransactionVerification\Services\Phone;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Modules\TransactionVerification\Tests\TestCase;
 
@@ -323,6 +324,36 @@ class InstaPayReceiptParserTest extends TestCase
     {
         $this->assertSame('Living Expenses', $this->parse('Note Living Expenses')->note);
         $this->assertSame('نفقات المعيشة', $this->parse('نفقات المعيشة ملاحظة')->note);
+    }
+
+    /** @return array<string, array{string, string, int, string}> */
+    public static function moreRecordings(): array
+    {
+        $rows = [];
+        // 10: the app's newer layout (name above the handle, "Send Money" under the amount); 11-13: the older one.
+        foreach (['10' => [1905400, '01000000110'], '11' => [1013500, '01200000111'], '12' => [1088400, '01000000112'], '13' => [1144400, '01200000113']] as $id => [$amount, $phone]) {
+            foreach (['tesseract', 'rapid'] as $engine) {
+                // (string): PHP turns the key "10" into an int.
+                $rows["{$id} {$engine}"] = [(string) $id, $engine, $amount, $phone];
+            }
+        }
+
+        return $rows;
+    }
+
+    #[DataProvider('moreRecordings')]
+    public function test_it_reads_both_layouts_from_both_engines(string $id, string $engine, int $amount, string $phone): void
+    {
+        $path = __DIR__."/../fixtures/ocr/instapay-{$id}.{$engine}.txt";
+
+        if (! is_file($path)) {
+            $this->markTestSkipped('Needs the recorded receipts in tests/fixtures/ocr/ (local only, not in git).');
+        }
+
+        $fields = $this->parse((string) file_get_contents($path));
+
+        $this->assertSame([$amount, $phone], [$fields->amountMinor, Phone::normalise($fields->phone)]);
+        $this->assertNotNull($fields->reference);
     }
 
     private function parse(string $text): ExtractedFields

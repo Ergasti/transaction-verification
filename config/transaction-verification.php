@@ -19,7 +19,14 @@ return [
     'engine' => env('TRANSACTION_VERIFICATION_ENGINE', 'tesseract'),
 
     // The ReceiptParser that reads OCR text into fields. Another app can plug in its own class.
-    'parser' => \Modules\TransactionVerification\Services\Parsers\InstaPayReceiptParser::class,
+    'parser' => \Modules\TransactionVerification\Services\Parsers\ReceiptRouter::class,
+
+    // The router's parsers, asked in order; the first that recognises the text reads it. InstaPay first: a transfer
+    // sent from an AlexBank account can show "ALEXBANK" as the sender's bank.
+    'parsers' => [
+        \Modules\TransactionVerification\Services\Parsers\InstaPayReceiptParser::class,
+        \Modules\TransactionVerification\Services\Parsers\AlexBankReceiptParser::class,
+    ],
 
     'tesseract' => [
         'binary' => env('TRANSACTION_VERIFICATION_TESSERACT_BINARY', 'tesseract'),

@@ -91,7 +91,8 @@ class ImagePreprocessorTest extends TestCase
     {
         $this->expectExceptionMessage('Image too large to read.');
 
-        $this->binarise($this->png(4000, 2600));
+        // Over 30 M pixels: more than three stacked A4 pages at 300 dpi.
+        $this->binarise($this->png(6000, 5100));
     }
 
     public function test_a_file_over_the_byte_limit_is_refused_before_it_is_read(): void

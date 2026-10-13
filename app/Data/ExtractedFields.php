@@ -2,6 +2,8 @@
 
 namespace Modules\TransactionVerification\Data;
 
+use Modules\TransactionVerification\Enums\ReceiptFormatEnum;
+
 /** What a parser read off a receipt. $confidence is 0–1 per field name (amount, phone, handle, account, reference). */
 final readonly class ExtractedFields
 {
@@ -17,6 +19,7 @@ final readonly class ExtractedFields
         public ?string $statusText = null,
         public ?string $note = null,
         public array $confidence = [],
+        public ?ReceiptFormatEnum $format = null,
     ) {}
 
     // Confidence key => toArray() key.
@@ -76,6 +79,8 @@ final readonly class ExtractedFields
             statusText: $data['status_text'] ?? null,
             note: $data['note'] ?? null,
             confidence: $data['confidence'] ?? [],
+            // Readings stored before formats were recorded have none.
+            format: ReceiptFormatEnum::tryFrom((string) ($data['format'] ?? '')),
         );
     }
 
@@ -95,6 +100,7 @@ final readonly class ExtractedFields
             'account' => $this->account === null ? null : '****'.$tail($this->account, 4),
             'reference' => $this->reference,
             'occurred_at' => $this->occurredAt,
+            'format' => $this->format?->value,
         ];
     }
 
@@ -111,6 +117,7 @@ final readonly class ExtractedFields
             'status_text' => $this->statusText,
             'note' => $this->note,
             'confidence' => $this->confidence,
+            'format' => $this->format?->value,
         ];
     }
 }

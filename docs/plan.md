@@ -464,7 +464,8 @@ ProcessVerificationJob
                  1.5× at 0.80; size caps shrink all passes alike, so the 1.5× one stays smaller), each pass OCR'd, the parser votes per field; Tesseract runs single-threaded
   3. (removed: pHash, see §3 "Duplicates")
   4. OCR (configured engine) ─ plain text per pass; the parser votes, confidence = passes that agree
-  5. parse ─ pick parser by layout fingerprint (InstaPay/IPN first, generic fallback)
+  5. parse ─ pick parser by layout fingerprint (InstaPay/IPN first, then AlexBank; built in 0.5 as ReceiptRouter.
+             The generic fallback, a search for the expected values, waits on the unrecognised counts)
              label-anchored: "Transfer Amount" / "Reference" / "Date:" / "To" (+ Arabic labels)
   6. normalise ─ digits, amount → minor units, phone → 01XXXXXXXXX, date → Africa/Cairo
   7. second engine (RapidOCR sidecar) ─ 'always': reads the upright greyscale image, a deciding field counts only

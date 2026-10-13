@@ -833,6 +833,27 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy->uuid)->verdict);
     }
 
+    public function test_an_alexbank_confirmation_is_checked_and_its_format_kept(): void
+    {
+        $this->reading("ALEXBANK\nPAY SOMEONE\nBENEFICIARY NAME MOBILE WALLET NUMBER\nPAYEE 0020".substr(self::PHONE, 1)."\nAMOUNT FEE\n3,070.00 EGP 100.00 EGP\nEXECUTION DATE");
+
+        $result = $this->verifier()->submit($this->request());
+
+        $this->assertSame(VerdictEnum::MATCH, $result->verdict);
+        $this->assertSame('alexbank', TransactionVerification::where('uuid', $result->uuid)->first()->extracted['format']);
+    }
+
+    public function test_a_receipt_no_parser_knows_is_unreadable_and_counted(): void
+    {
+        // The expected amount and phone are in the text, but no parser knows this layout: a person looks.
+        $this->reading("Some Bank\nTotal 3,070.00 EGP\n".self::PHONE);
+
+        $result = $this->verifier()->submit($this->request());
+
+        $this->assertSame(VerdictEnum::UNREADABLE, $result->verdict);
+        $this->assertSame('unrecognised', TransactionVerification::where('uuid', $result->uuid)->first()->extracted['format']);
+    }
+
     private function stuckRow(): TransactionVerification
     {
         $result = $this->verifier()->submit($this->request());

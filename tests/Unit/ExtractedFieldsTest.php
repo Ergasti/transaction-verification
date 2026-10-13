@@ -3,6 +3,7 @@
 namespace Modules\TransactionVerification\Tests\Unit;
 
 use Modules\TransactionVerification\Data\ExtractedFields;
+use Modules\TransactionVerification\Enums\ReceiptFormatEnum;
 use PHPUnit\Framework\TestCase;
 
 /** How a second engine's reading changes the first's: 'always' (confirmedBy) and 'fallback' (filledFrom). */
@@ -56,5 +57,22 @@ class ExtractedFieldsTest extends TestCase
 
         $filled = (new ExtractedFields)->filledFrom(new ExtractedFields(amountMinor: 2000, currency: 'EGP'), 0.90);
         $this->assertSame([2000, 'EGP'], [$filled->amountMinor, $filled->currency]);
+    }
+
+    public function test_the_format_survives_storage_and_old_readings_have_none(): void
+    {
+        $fields = new ExtractedFields(amountMinor: 307000, format: ReceiptFormatEnum::ALEXBANK);
+
+        $this->assertSame(ReceiptFormatEnum::ALEXBANK, ExtractedFields::fromArray($fields->toArray())->format);
+        $this->assertSame('alexbank', $fields->masked()['format']);
+        $this->assertNull(ExtractedFields::fromArray(['amount_minor' => 307000])->format);
+    }
+
+    public function test_the_second_engine_keeps_this_readings_format(): void
+    {
+        $ours = new ExtractedFields(amountMinor: 307000, format: ReceiptFormatEnum::INSTAPAY);
+
+        $this->assertSame(ReceiptFormatEnum::INSTAPAY, $ours->confirmedBy(new ExtractedFields(amountMinor: 307000))->format);
+        $this->assertSame(ReceiptFormatEnum::INSTAPAY, $ours->filledFrom(new ExtractedFields(amountMinor: 307000), 0.9)->format);
     }
 }

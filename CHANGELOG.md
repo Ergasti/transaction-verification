@@ -12,6 +12,15 @@
 - The amount also passes with the piastres dropped (17,906.59 expected, 17,906 read), since banks send whole pounds;
   rounding up still fails. Such receipts move from `mismatch` (or `needs_review` when the amount was read unsurely) to
   `match`. The rule assumes a currency with 2 decimals, like EGP.
+- AlexBank "Pay someone" confirmations are read (`AlexBankReceiptParser`), including several stacked in one image
+  for a split payout: the amounts are added up, and each must name the same wallet.
+- The default `parser` is now `ReceiptRouter`. It hands the text to the first of `parsers` (InstaPay, then AlexBank)
+  that recognises it. Text none recognises reads nothing and comes back `unreadable`. An app that set its own `parser`
+  is unaffected.
+- Each reading records its `format` (`instapay`, `alexbank`, `unrecognised`); results show it, and the shadow report
+  has a `format` column.
+- `shadow-report --subject-type=` lists another caller's checks (default `affiliate_payout`).
+- Images up to 30 M pixels are read (was 8 M): AlexBank exports A4 at 300 dpi, 8.7 M pixels a page.
 
 ## 0.4.1
 

@@ -88,11 +88,11 @@ class ResultAndReportTest extends TestCase
         $output = Artisan::output();
         $lines = array_map('str_getcsv', explode("\n", trim($output)));
 
-        $this->assertSame(['uuid', 'subject_id', 'created_at', 'status', 'verdict', 'confidence', 'amount', 'destination', 'duplicate', 'label'], $lines[0]);
+        $this->assertSame(['uuid', 'subject_id', 'created_at', 'status', 'verdict', 'format', 'confidence', 'amount', 'destination', 'duplicate', 'label'], $lines[0]);
         $this->assertCount(2, $lines);
         $row = array_combine($lines[0], $lines[1]);
         $this->assertSame($recent, $row['uuid']);
-        $this->assertSame(['pass', 'pass', ''], [$row['amount'], $row['destination'], $row['label']]);
+        $this->assertSame(['instapay', 'pass', 'pass', ''], [$row['format'], $row['amount'], $row['destination'], $row['label']]);
         $this->assertStringNotContainsString('01000000001', $output);
     }
 
@@ -119,6 +119,23 @@ class ResultAndReportTest extends TestCase
         $this->assertCount(2, $lines);
         $this->assertSame($formula, $lines[1][0]);
         $this->assertSame('\'=HYPERLINK("http://x")', $lines[1][1]);
+    }
+
+    public function test_the_shadow_report_lists_another_subject_type_when_asked(): void
+    {
+        $this->reading(self::RECEIPT);
+        $this->verifier()->submit($this->request('payout', 1));
+        $other = $this->verifier()->submit(new VerificationRequest(
+            subjectType: 'payout_transaction', subjectId: 'SRT-1', expectedAmountMinor: 307000,
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, '01000000001'),
+            file: UploadedFile::fake()->image('receipt.png', 702, 1600), idempotencyKey: 'payout_transaction:SRT-1',
+        ))->uuid;
+
+        Artisan::call('transaction-verification:shadow-report', ['--subject-type' => 'payout_transaction']);
+        $lines = array_map('str_getcsv', explode("\n", trim(Artisan::output())));
+
+        $this->assertCount(2, $lines);
+        $this->assertSame([$other, 'SRT-1'], array_slice($lines[1], 0, 2));
     }
 
     public function test_the_shadow_report_defuses_full_width_and_line_feed_formula_prefixes(): void

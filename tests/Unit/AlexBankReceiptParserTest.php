@@ -1,0 +1,194 @@
+<?php
+
+namespace Modules\TransactionVerification\Tests\Unit;
+
+use Modules\TransactionVerification\Data\ExtractedFields;
+use Modules\TransactionVerification\Services\Parsers\AlexBankReceiptParser;
+use Modules\TransactionVerification\Tests\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
+
+/**
+ * Recorded output of real AlexBank confirmations (Tesseract's 4 passes, and RapidOCR), with the phones and the sender
+ * account made up, kept out of git: those tests skip without the files. The rest is synthetic text in both layouts.
+ */
+class AlexBankReceiptParserTest extends TestCase
+{
+    /** @return array<string, array{string, string, int, string}> */
+    public static function recordings(): array
+    {
+        return [
+            '01 two stacked, tesseract' => ['01', 'tesseract', 6038400, '01000000101'],
+            // RapidOCR shrinks the 7016 px stack to 1600 px and misreads one digit: the engines disagree, a person looks.
+            '01 two stacked, rapidocr' => ['01', 'rapid', 6038400, '01000000191'],
+            '02 tesseract' => ['02', 'tesseract', 1387600, '01200000102'],
+            '02 rapidocr' => ['02', 'rapid', 1387600, '01200000102'],
+            '03 tesseract' => ['03', 'tesseract', 877600, '01500000103'],
+            '03 rapidocr' => ['03', 'rapid', 877600, '01500000103'],
+        ];
+    }
+
+    #[DataProvider('recordings')]
+    public function test_it_reads_every_recorded_confirmation(string $id, string $engine, int $amount, string $phone): void
+    {
+        $fields = $this->parse($this->recorded("alexbank-{$id}.{$engine}"));
+
+        $this->assertSame([$amount, 'EGP', $phone, 'EXECUTED'], [$fields->amountMinor, $fields->currency, $fields->phone, $fields->statusText]);
+        $this->assertNull($fields->reference);
+    }
+
+    public function test_a_wallet_one_pass_garbled_lowers_its_confidence(): void
+    {
+        // Tesseract's second pass read the stack's second wallet as "2228": that pass can't vouch for every transfer.
+        $fields = $this->parse($this->recorded('alexbank-01.tesseract'));
+
+        $this->assertSame(['amount' => 1.0, 'phone' => 0.75], $fields->confidence);
+    }
+
+    public function test_it_reads_tesseracts_layout(): void
+    {
+        $fields = $this->parse(self::confirmation('3,070.00', '00201000000001'));
+
+        $this->assertSame([307000, 'EGP', '01000000001', 'EXECUTED'], [$fields->amountMinor, $fields->currency, $fields->phone, $fields->statusText]);
+        $this->assertSame(['amount' => 1.0, 'phone' => 1.0], $fields->confidence);
+    }
+
+    public function test_it_reads_rapidocrs_layout_with_a_misread_label(): void
+    {
+        $text = "ALEXBANK\nOBJECT\nPAY SOMEONE\nBENEFICIARY NAME\nMOBILE WALLET NUMBER\n00201000000001\nAVOUNT\nFEE\n3,070.00 EGP\n100.00 EGP\nEXECUTION DATE\n17/02/2025";
+
+        $fields = $this->parse($text);
+
+        $this->assertSame([307000, '01000000001'], [$fields->amountMinor, $fields->phone]);
+    }
+
+    public function test_a_split_payout_is_added_up(): void
+    {
+        $fields = $this->parse(self::confirmation('50,000.00', '00201000000001', '250.00').self::confirmation('10,384.00', '00201000000001'));
+
+        $this->assertSame([6038400, '01000000001'], [$fields->amountMinor, $fields->phone]);
+    }
+
+    public function test_the_fee_never_counts(): void
+    {
+        $this->assertSame(10000, $this->parse(self::confirmation('100.00', '00201000000001', '250.00'))->amountMinor);
+    }
+
+    public function test_a_wallet_with_a_dropped_zero_is_read(): void
+    {
+        // Tesseract often reads "0020…" as "020…".
+        $this->assertSame('01000000001', $this->parse(self::confirmation('3,070.00', '0201000000001'))->phone);
+    }
+
+    public function test_the_senders_account_is_never_the_wallet(): void
+    {
+        $fields = $this->parse(str_replace('00201000000001', '', self::confirmation('3,070.00', '00201000000001')));
+
+        $this->assertNull($fields->phone);
+        $this->assertSame(307000, $fields->amountMinor);
+    }
+
+    public function test_stacked_confirmations_to_two_wallets_read_no_wallet(): void
+    {
+        $fields = $this->parse(self::confirmation('50,000.00', '00201000000001').self::confirmation('10,384.00', '00201000000002'));
+
+        $this->assertNull($fields->phone);
+        $this->assertSame(6038400, $fields->amountMinor);
+    }
+
+    public function test_a_stacked_confirmation_without_its_wallet_reads_no_wallet(): void
+    {
+        $fields = $this->parse(self::confirmation('50,000.00', '00201000000001').self::confirmation('10,384.00', '2228'));
+
+        $this->assertNull($fields->phone);
+    }
+
+    /** @return array<string, array{string}> */
+    public static function garbledAmounts(): array
+    {
+        return [
+            'a letter for a digit' => ['1O,384.00'],
+            'no piastres' => ['10,384'],
+            'a misread separator' => ['10,384,00'],
+        ];
+    }
+
+    #[DataProvider('garbledAmounts')]
+    public function test_a_garbled_amount_in_a_stack_reads_no_sum_never_a_smaller_one(string $garbled): void
+    {
+        $fields = $this->parse(self::confirmation('50,000.00', '00201000000001').self::confirmation($garbled, '00201000000001'));
+
+        $this->assertNull($fields->amountMinor);
+    }
+
+    public function test_an_amount_row_missing_its_fee_reads_no_amount(): void
+    {
+        // With one number only, it could be the fee.
+        $text = "PAY SOMEONE\nMOBILE WALLET NUMBER\n00201000000001\nAMOUNT FEE\n100.00 EGP\nEXECUTION DATE";
+
+        $this->assertNull($this->parse($text)->amountMinor);
+    }
+
+    public function test_a_confirmation_missed_whole_reads_no_sum(): void
+    {
+        // Two confirmations, but the second's amount row is gone: the sum would be short.
+        $second = str_replace("AMOUNT FEE\n10,384.00 EGP 100.00 EGP\n", '', self::confirmation('10,384.00', '00201000000001'));
+
+        $this->assertNull($this->parse(self::confirmation('50,000.00', '00201000000001').$second)->amountMinor);
+    }
+
+    public function test_most_passes_win_and_one_disagreeing_lowers_confidence(): void
+    {
+        $good = self::confirmation('3,070.00', '00201000000001');
+        $fields = $this->parse(implode("\f", [$good, $good, $good, self::confirmation('3,070.00', '00201000000002')]));
+
+        $this->assertSame('01000000001', $fields->phone);
+        $this->assertSame(0.75, $fields->confidence['phone']);
+    }
+
+    /** @return array<string, array{string, bool}> */
+    public static function signals(): array
+    {
+        return [
+            'the bank name' => ['ALEXBANK', true],
+            'the transfer kind' => ['PAY SOMEONE', true],
+            'the beneficiary label' => ['BENEFICIARY NAME', true],
+            'the wallet label' => ['MOBILE WALLET NUMBER', true],
+            'an InstaPay receipt' => ["3,070 EGP\nTransfer Amount\nTo Instapay\n01000000001", false],
+            'nothing' => ['', false],
+        ];
+    }
+
+    #[DataProvider('signals')]
+    public function test_any_one_signal_recognises_it(string $text, bool $recognised): void
+    {
+        $this->assertSame($recognised, app(AlexBankReceiptParser::class)->recognises($text));
+    }
+
+    /** One confirmation as Tesseract lays it out: label rows with their values on the next line. Synthetic values. */
+    private static function confirmation(string $amount, string $wallet, string $fee = '100.00'): string
+    {
+        return "ALEXBANK\nOBJECT DATE AND HOUR\nPAY SOMEONE 17/02/2025 19:53:17\nSTATUS\nEXECUTED\n"
+            ."Your order of Pay someone is confirmed as follows:\nCUSTOMER NAME ACCOUNT\n900000000001 SENDER CO\n"
+            ."TRANSACTION DETAILS\nBENEFICIARY NAME MOBILE WALLET NUMBER\nPAYEE NAME {$wallet}\n"
+            ."PAYMENT TYPE PURPOSE OF TRANSFER\nMobile wallet CASH TRANSFER\nAMOUNT FEE\n{$amount} EGP {$fee} EGP\n"
+            ."EXECUTION DATE DESCRIPTION\n17/02/2025 Marketing Fees\n"
+            ."The fee for the transfer will be debited in accordance with the prevailing list of conditions.\n";
+    }
+
+    private function parse(string $text): ExtractedFields
+    {
+        return app(AlexBankReceiptParser::class)->parse($text);
+    }
+
+    /** Recorded output of real receipts: local only, like the screenshots (tests/fixtures/ocr/ is git-ignored). */
+    private function recorded(string $name): string
+    {
+        $path = __DIR__."/../fixtures/ocr/{$name}.txt";
+
+        if (! is_file($path)) {
+            $this->markTestSkipped('Needs the recorded receipts in tests/fixtures/ocr/ (local only, not in git).');
+        }
+
+        return (string) file_get_contents($path);
+    }
+}
