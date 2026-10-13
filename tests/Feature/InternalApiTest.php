@@ -130,6 +130,12 @@ class InternalApiTest extends TestCase
 
     public function test_every_answer_matches_the_committed_spec(): void
     {
+        // Spectator 2 (the Laravel 11 line) never migrates `nullable` inside `additionalProperties`,
+        // so the null values of `extracted` fail the spec there. Spectator 3 covers it.
+        if (version_compare(\Composer\InstalledVersions::getVersion('hotmeteor/spectator'), '3.0.0', '<')) {
+            $this->markTestSkipped('needs hotmeteor/spectator ^3.0');
+        }
+
         Spectator::using('transaction-verification-internal.yaml');
         // The spec's paths are relative to its server URL, which carries the prefix.
         config(['spectator.path_prefix' => self::PREFIX]);

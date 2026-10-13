@@ -8,7 +8,7 @@ Two OCR engines read every receipt (Tesseract in the app's image, RapidOCR in a 
 field counts only when both read it the same. The receipt is read straight from the upload and **never stored**: only
 the verdict, the fields read (encrypted) and the fingerprints that catch a reused receipt are kept.
 
-A Laravel 12 package (PHP 8.3+). The namespace is `Modules\TransactionVerification`.
+A Laravel 11 or 12 package (PHP 8.3+). The namespace is `Modules\TransactionVerification`.
 
 ## Install
 

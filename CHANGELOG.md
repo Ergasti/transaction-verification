@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Laravel 11 is supported next to 12 (`laravel/framework: ^11.0|^12.0`); the test suite runs on both.
+
 ## 0.4.0
 
 **Breaking** for an app that ran the install command in scripts.
