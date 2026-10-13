@@ -19,10 +19,6 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
 {
     use VotesAcrossPasses;
 
-    public const FORMAT = ReceiptFormatEnum::ALEXBANK;
-
-    protected const CURRENCY = 'EGP';
-
     // Printed labels, any one of them: the logo is an image and a bank may rename one label.
     private const SIGNALS = '/ALEXBANK|PAY\s+SOMEONE|BENEFICIARY\s+NAME|MOBILE\s+WALLET\s+NUMBER/i';
 
@@ -31,10 +27,15 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
     // start only: the sentence "Your order of Pay someone is confirmed" repeats one of them.
     private const PER_TRANSFER = ['/^PAY\s+SOMEONE\b/im', '/^OBJECT\b/im', '/^TRANSACTION\s+DETAILS\b/im', '/^BENEFICIARY\s+NAME\b/im'];
 
-    // The AMOUNT | FEE label row, with RapidOCR's misreads ("AVOUNT") of the first. Upper case only: "Marketing Fees"
-    // and the footer's "fee" are text. The values follow in label order, amount first, on one line (Tesseract) or
-    // one per line (RapidOCR).
-    private const AMOUNT_LABELS = '/\b(FEE|A[A-Z]OUNT)\b/';
+    // The AMOUNT | FEE label row, with RapidOCR's misreads ("AVOUNT") of the first: a line holding nothing but those
+    // labels, both on one line (Tesseract) or one per line (RapidOCR). Upper case and alone: "Marketing Fees", the
+    // footer's "fee" or a description typed as "REFERRAL FEE" is text, not the row.
+    private const LABEL_ROW = '/^(?:A[A-Z]OUNT|FEE)(?:\s+(?:A[A-Z]OUNT|FEE))*$/';
+
+    private const LABEL = '/A[A-Z]OUNT|FEE/';
+
+    // A line of values right under the labels: numbers and currency codes only ("13,876.00 EGP 100.00 EGP").
+    private const VALUE_LINE = '/^(?:\S*\d\S*|[A-Z]{2,4})(?:\s+(?:\S*\d\S*|[A-Z]{2,4}))*$/';
 
     // A wallet number. Tesseract often drops a zero of 0020 ("020…"), so that counts too.
     private const WALLET = '/(?<![\d+])(?:\+20|0020|020|0)1\d{9}(?!\d)/';
@@ -67,6 +68,16 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
         return preg_match(self::SIGNALS, $text) === 1;
     }
 
+    public function format(): ReceiptFormatEnum
+    {
+        return ReceiptFormatEnum::ALEXBANK;
+    }
+
+    protected function currency(): string
+    {
+        return 'EGP';
+    }
+
     /** @return array<string, mixed> the fields one pass could read */
     protected function read(string $pass): array
     {
@@ -90,8 +101,9 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
     }
 
     /**
-     * One entry per AMOUNT | FEE row: the first of the next two numbers, false when it isn't an amount or the row
-     * doesn't have both (with only one, it could be the fee).
+     * One entry per AMOUNT | FEE row: the value under AMOUNT, or false unless the row reads whole. The values must sit
+     * on the lines right under the labels, one per label, so nothing from further down the page can stand in for a
+     * lost one. The amount must be money ("10,384.00") and more than the fee beside it: a fee never passes for it.
      *
      * @param  list<string>  $lines
      * @return list<int|false>
@@ -99,37 +111,51 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
     private function amounts(array $lines): array
     {
         $amounts = [];
-        $numbers = null;
+        $count = count($lines);
 
-        foreach ($lines as $line) {
-            if (preg_match(self::AMOUNT_LABELS, $line)) {
-                $numbers ??= [];
-
+        for ($k = 0; $k < $count; $k++) {
+            if (! preg_match(self::LABEL_ROW, $lines[$k])) {
                 continue;
             }
 
-            if ($numbers === null) {
-                continue;
+            $labels = [];
+            for (; $k < $count && preg_match(self::LABEL_ROW, $lines[$k]); $k++) {
+                preg_match_all(self::LABEL, $lines[$k], $m);
+                array_push($labels, ...$m[0]);
             }
 
-            preg_match_all(self::NUMBER, $line, $m);
-            array_push($numbers, ...$m[0]);
-
-            // Both values read, or a label line with no number: the row is over.
-            if (count($numbers) >= 2 || $m[0] === []) {
-                // ?: a zero is a lost amount, never a payout.
-                $amounts[] = count($numbers) >= 2 && preg_match(self::MONEY, $numbers[0]) && preg_match(self::FEE, $numbers[1])
-                    ? ($this->amounts->parse($numbers[0]) ?: false)
-                    : false;
-                $numbers = null;
+            $numbers = [];
+            for (; $k < $count && count($numbers) < count($labels) && preg_match(self::VALUE_LINE, $lines[$k]); $k++) {
+                preg_match_all(self::NUMBER, $lines[$k], $m);
+                array_push($numbers, ...$m[0]);
             }
-        }
+            $k--;
 
-        if ($numbers !== null) {
-            $amounts[] = false;
+            $amounts[] = $this->amount($labels, $numbers);
         }
 
         return $amounts;
+    }
+
+    /**
+     * @param  list<string>  $labels  the row's labels in order
+     * @param  list<string>  $numbers  the values under them in order
+     */
+    private function amount(array $labels, array $numbers): int|false
+    {
+        $fee = array_search('FEE', $labels, true);
+        $amount = array_key_first(array_filter($labels, fn (string $label) => $label !== 'FEE'));
+
+        if (count($labels) !== 2 || count($numbers) !== 2 || $fee === false || $amount === null
+            || ! preg_match(self::MONEY, $numbers[$amount]) || ! preg_match(self::FEE, $numbers[$fee])) {
+            return false;
+        }
+
+        // The fee always has two decimals ("100.00", or misread "100,00"), so its digits are its piastres.
+        // ?: a zero is a lost amount, never a payout.
+        $minor = $this->amounts->parse($numbers[$amount]) ?: false;
+
+        return $minor !== false && $minor > (int) preg_replace('/\D/', '', $numbers[$fee]) ? $minor : false;
     }
 
     /**

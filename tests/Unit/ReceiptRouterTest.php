@@ -3,10 +3,12 @@
 namespace Modules\TransactionVerification\Tests\Unit;
 
 use Modules\TransactionVerification\Contracts\ReceiptParser;
+use Modules\TransactionVerification\Contracts\RecognisesReceipts;
 use Modules\TransactionVerification\Data\ExtractedFields;
 use Modules\TransactionVerification\Enums\ReceiptFormatEnum;
 use Modules\TransactionVerification\Services\Parsers\InstaPayReceiptParser;
 use Modules\TransactionVerification\Services\Parsers\ReceiptRouter;
+use Modules\TransactionVerification\Services\Parsers\VotesAcrossPasses;
 use Modules\TransactionVerification\Tests\TestCase;
 
 /** Which parser reads which text. Synthetic text only. */
@@ -57,6 +59,13 @@ class ReceiptRouterTest extends TestCase
         $fields = (new ReceiptRouter)->parse("Some Bank\nTotal 3,070.00 EGP\n01000000001");
 
         $this->assertEquals(new ExtractedFields(format: ReceiptFormatEnum::UNRECOGNISED), $fields);
+    }
+
+    public function test_a_parser_without_its_format_or_currency_cannot_be_written(): void
+    {
+        // The router needs format() and the shared vote needs currency(): both are declared, not left to the README.
+        $this->assertTrue((new \ReflectionMethod(RecognisesReceipts::class, 'format'))->isAbstract());
+        $this->assertTrue((new \ReflectionMethod(VotesAcrossPasses::class, 'currency'))->isAbstract());
     }
 
     public function test_a_configured_parser_that_cannot_recognise_is_skipped(): void

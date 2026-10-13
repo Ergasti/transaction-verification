@@ -16,6 +16,9 @@ trait VotesAcrossPasses
     /** @return array<string, mixed> the fields one pass could read; false = two candidates, counts against the winner */
     abstract protected function read(string $pass): array;
 
+    /** The currency an amount read off this layout is in. */
+    abstract protected function currency(): string;
+
     public function parse(string $text): ExtractedFields
     {
         $passes = array_filter(explode("\f", $text), fn (string $pass) => trim($pass) !== '');
@@ -36,7 +39,7 @@ trait VotesAcrossPasses
 
         return new ExtractedFields(
             amountMinor: $fields['amount_minor'],
-            currency: $fields['amount_minor'] === null ? null : static::CURRENCY,
+            currency: $fields['amount_minor'] === null ? null : $this->currency(),
             phone: $fields['phone'],
             handle: $fields['handle'],
             account: $fields['account'],

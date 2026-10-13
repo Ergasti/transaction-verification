@@ -106,7 +106,7 @@ A router reads each receipt with the first parser that recognises it, and record
 
 | `format` | Receipt | Notes |
 |---|---|---|
-| `instapay` | InstaPay app, English or Arabic, old and new layout | Recognised by its "Transfer Amount" label or an `@instapay` address |
+| `instapay` | InstaPay app, English or Arabic, old and new layout | Recognised by its "Transfer Amount" (المحول) label or an `@instapay` address |
 | `alexbank` | AlexBank "Pay someone" confirmation (A4 export) | Recognised by "ALEXBANK", "PAY SOMEONE", "BENEFICIARY NAME" or "MOBILE WALLET NUMBER". Several confirmations stacked in one image (a split payout) are added up, and each must name the same wallet. It has no reference number |
 | `unrecognised` | Anything else | Nothing is read, so it comes back `unreadable` and a person looks |
 
@@ -114,8 +114,9 @@ Any one signal is enough, so a renamed label doesn't lose a format. A layout tha
 `unrecognised`, which the shadow report shows. A tall stack of confirmations reads less well on the second engine
 (it shrinks the image to 1600 px), so a stacked receipt can land in `needs_review` where the engines disagree.
 
-**Adding a format:** write a parser that implements `ReceiptParser` and `RecognisesReceipts`, uses `VotesAcrossPasses`
-and has a `FORMAT` constant (a new `ReceiptFormatEnum` case), then add it to `transaction-verification.parsers`. The
+**Adding a format:** add a `ReceiptFormatEnum` case, then write a parser that implements `ReceiptParser` and
+`RecognisesReceipts` (`recognises()` and `format()`) and uses `VotesAcrossPasses` (`read()` for one pass and
+`currency()`), and add it to `transaction-verification.parsers`. PHP refuses the class if one of them is missing. The
 order matters: the first parser that recognises the text reads it.
 
 ## Verdicts

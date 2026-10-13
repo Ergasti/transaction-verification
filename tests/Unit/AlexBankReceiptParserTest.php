@@ -70,7 +70,41 @@ class AlexBankReceiptParserTest extends TestCase
 
     public function test_the_fee_never_counts(): void
     {
-        $this->assertSame(10000, $this->parse(self::confirmation('100.00', '00201000000001', '250.00'))->amountMinor);
+        $this->assertSame(307000, $this->parse(self::confirmation('3,070.00', '00201000000001', '250.00'))->amountMinor);
+    }
+
+    public function test_an_amount_no_more_than_its_fee_is_unread(): void
+    {
+        // The values swapped (or the amount lost and another number in its place): the fee must not pass as the amount.
+        $swapped = "PAY SOMEONE\nMOBILE WALLET NUMBER\n00201000000001\nAMOUNT\nFEE\n100.00 EGP\n3,070.00 EGP\nEXECUTION DATE";
+
+        $this->assertNull($this->parse($swapped)->amountMinor);
+        $this->assertNull($this->parse(self::confirmation('100.00', '00201000000001', '250.00'))->amountMinor);
+    }
+
+    public function test_a_value_further_down_never_stands_in_for_a_lost_one(): void
+    {
+        // The amount garbled and the label line under the values lost: the description's number is not the fee.
+        $text = str_replace("EXECUTION DATE DESCRIPTION\n17/02/2025 Marketing Fees", '17/02/2025 Bonus 2.50', self::confirmation('1O,384.00', '00201000000001', '5.00'));
+
+        $this->assertNull($this->parse($text)->amountMinor);
+    }
+
+    /** @return array<string, array{string}> */
+    public static function descriptions(): array
+    {
+        return [
+            'an upper-case fee' => ['17/02/2025 REFERRAL FEE'],
+            'an upper-case amount' => ['17/02/2025 BONUS AMOUNT'],
+        ];
+    }
+
+    #[DataProvider('descriptions')]
+    public function test_labels_typed_in_the_description_are_text(string $description): void
+    {
+        $fields = $this->parse(str_replace('17/02/2025 Marketing Fees', $description, self::confirmation('3,070.00', '00201000000001')));
+
+        $this->assertSame([307000, '01000000001'], [$fields->amountMinor, $fields->phone]);
     }
 
     public function test_a_wallet_with_a_dropped_zero_is_read(): void

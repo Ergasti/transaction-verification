@@ -19,7 +19,7 @@ class ReceiptRouter implements ReceiptParser
             $parser = app($class);
 
             if ($parser instanceof RecognisesReceipts && $parser->recognises($text)) {
-                return ExtractedFields::fromArray(['format' => $parser::FORMAT->value] + $parser->parse($text)->toArray());
+                return ExtractedFields::fromArray(['format' => $parser->format()->value] + $parser->parse($text)->toArray());
             }
         }
 

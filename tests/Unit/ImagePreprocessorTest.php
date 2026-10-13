@@ -87,6 +87,14 @@ class ImagePreprocessorTest extends TestCase
         $this->assertEqualsWithDelta($large * 0.75, $small, 1);
     }
 
+    public function test_a_bank_export_over_the_old_cap_is_read(): void
+    {
+        // 16 M pixels: two stacked A4 pages at 300 dpi are 17.4 M, over the earlier 8 M cap.
+        $out = $this->files[] = (new ImagePreprocessor)->binarise($this->png(4000, 4000), 0.80);
+
+        $this->assertFileExists($out);
+    }
+
     public function test_an_image_too_large_is_refused_before_it_is_decoded(): void
     {
         $this->expectExceptionMessage('Image too large to read.');

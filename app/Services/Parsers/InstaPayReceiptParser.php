@@ -21,11 +21,6 @@ class InstaPayReceiptParser implements ReceiptParser, RecognisesReceipts
 {
     use VotesAcrossPasses;
 
-    public const FORMAT = ReceiptFormatEnum::INSTAPAY;
-
-    // InstaPay is EGP-only, and the orange currency never OCRs reliably.
-    protected const CURRENCY = 'EGP';
-
     private const PHONE = '/(?<![\d+])(?:\+20|0020|0)1\d{9}(?!\d)/';
 
     // A whole address only: no piece of "alice@instapay.com" or "alice+shop@instapay".
@@ -60,6 +55,17 @@ class InstaPayReceiptParser implements ReceiptParser, RecognisesReceipts
     public function recognises(string $text): bool
     {
         return preg_match('/Transfer\h+Amount|المحول/iu', $text) === 1 || preg_match(self::HANDLE, $text) === 1;
+    }
+
+    public function format(): ReceiptFormatEnum
+    {
+        return ReceiptFormatEnum::INSTAPAY;
+    }
+
+    /** InstaPay is EGP-only, and the orange currency never OCRs reliably. */
+    protected function currency(): string
+    {
+        return 'EGP';
     }
 
     /** @return array<string, mixed> the fields one pass could read */
