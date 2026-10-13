@@ -3,7 +3,9 @@
 namespace Modules\TransactionVerification\Tests\Unit;
 
 use Modules\TransactionVerification\Data\ExtractedFields;
+use Modules\TransactionVerification\Enums\ReceiptFormatEnum;
 use Modules\TransactionVerification\Services\Parsers\AlexBankReceiptParser;
+use Modules\TransactionVerification\Services\Parsers\ReceiptRouter;
 use Modules\TransactionVerification\Tests\TestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
 
@@ -30,7 +32,11 @@ class AlexBankReceiptParserTest extends TestCase
     #[DataProvider('recordings')]
     public function test_it_reads_every_recorded_confirmation(string $id, string $engine, int $amount, string $phone): void
     {
-        $fields = $this->parse($this->recorded("alexbank-{$id}.{$engine}"));
+        $text = $this->recorded("alexbank-{$id}.{$engine}");
+        $fields = $this->parse($text);
+
+        // The real text reaches this parser through the router too.
+        $this->assertSame(ReceiptFormatEnum::ALEXBANK, (new ReceiptRouter)->parse($text)->format);
 
         $this->assertSame([$amount, 'EGP', $phone, 'EXECUTED'], [$fields->amountMinor, $fields->currency, $fields->phone, $fields->statusText]);
         $this->assertNull($fields->reference);
@@ -151,6 +157,10 @@ class AlexBankReceiptParserTest extends TestCase
             'the leading 1 split off as I' => ['I 0,384.00'],
             'the leading 1 split off as a bar' => ['| 0,384.00'],
             'a leading zero, no comma' => ['0384.00'],
+            // A garbled first group split off by a space: what is left of it is not the amount.
+            'a garbled group split off' => ['1O, 384.00'],
+            'a garbled group split off, no comma' => ['1O 384.00'],
+            'a leading 1 read as I, split off' => ['I0, 384.00'],
             'no piastres' => ['10,384'],
             'a misread separator' => ['10,384,00'],
         ];
@@ -224,6 +234,19 @@ class AlexBankReceiptParserTest extends TestCase
         $second = str_replace("AMOUNT FEE\n10,384.00 EGP 100.00 EGP\n", '', self::confirmation('10,384.00', '00201000000001'));
 
         $this->assertNull($this->parse(self::confirmation('50,000.00', '00201000000001').$second)->amountMinor);
+    }
+
+    public function test_a_pass_that_saw_part_of_the_stack_never_wins_with_its_partial_sum(): void
+    {
+        $one = self::confirmation('50,000.00', '00201000000001');
+        $both = $one.self::confirmation('10,384.00', '00201000000001');
+
+        // Either order: on a tie the earlier pass would win, so the partial pass must not be a candidate at all.
+        foreach ([[$one, $both], [$both, $one]] as $passes) {
+            $fields = $this->parse(implode("\f", $passes));
+
+            $this->assertSame([6038400, 0.5], [$fields->amountMinor, $fields->confidence['amount']]);
+        }
     }
 
     public function test_most_passes_win_and_one_disagreeing_lowers_confidence(): void

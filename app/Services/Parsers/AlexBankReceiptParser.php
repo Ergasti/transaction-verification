@@ -4,6 +4,7 @@ namespace Modules\TransactionVerification\Services\Parsers;
 
 use Modules\TransactionVerification\Contracts\ReceiptParser;
 use Modules\TransactionVerification\Contracts\RecognisesReceipts;
+use Modules\TransactionVerification\Data\ExtractedFields;
 use Modules\TransactionVerification\Enums\ReceiptFormatEnum;
 use Modules\TransactionVerification\Services\AmountParser;
 use Modules\TransactionVerification\Services\Digits;
@@ -17,7 +18,9 @@ use Modules\TransactionVerification\Services\Phone;
  */
 class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
 {
-    use VotesAcrossPasses;
+    use VotesAcrossPasses {
+        parse as private votedParse;
+    }
 
     // Printed labels, any one of them: the logo is an image and a bank may rename one label.
     private const SIGNALS = '/ALEXBANK|PAY\s+SOMEONE|BENEFICIARY\s+NAME|MOBILE\s+WALLET\s+NUMBER/i';
@@ -63,6 +66,25 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
         private readonly AmountParser $amounts,
     ) {}
 
+    // The most confirmations any pass of the text being parsed saw; set by parse() for read().
+    private int $stack = 0;
+
+    /**
+     * A pass that saw fewer confirmations than another read only part of the stack: its sum and wallet count against
+     * the others instead of competing with them, so a tie between passes can never pick a partial sum.
+     */
+    public function parse(string $text): ExtractedFields
+    {
+        $this->stack = 0;
+
+        foreach (array_filter(explode("\f", $text), fn (string $pass) => trim($pass) !== '') as $pass) {
+            $lines = $this->lines($pass);
+            $this->stack = max($this->stack, $this->transfers($lines, $this->amounts($lines), $this->wallets($lines)));
+        }
+
+        return $this->votedParse($text);
+    }
+
     public function recognises(string $text): bool
     {
         return preg_match(self::SIGNALS, $text) === 1;
@@ -81,15 +103,11 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
     /** @return array<string, mixed> the fields one pass could read */
     protected function read(string $pass): array
     {
-        $lines = array_values(array_filter(
-            array_map(fn (string $line) => trim(Digits::fold((string) preg_replace('/\p{Cf}/u', '', $line))), explode("\n", $pass)),
-            fn (string $line) => $line !== '',
-        ));
+        $lines = $this->lines($pass);
 
         $amounts = $this->amounts($lines);
         $wallets = $this->wallets($lines);
-        $text = implode("\n", $lines);
-        $transfers = max(count($amounts), count($wallets), ...array_map(fn (string $label) => preg_match_all($label, $text), self::PER_TRANSFER));
+        $transfers = max($this->stack, $this->transfers($lines, $amounts, $wallets));
 
         return [
             // A missed or unreadable amount would make the sum wrong, not short: no amount then.
@@ -98,6 +116,29 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
             'phone' => $transfers === 0 || $wallets === [] ? null : ($transfers === count($wallets) && ! in_array(false, $wallets, true) && count(array_unique($wallets)) === 1 ? $wallets[0] : false),
             'status_text' => preg_grep('/\bEXECUTED\b/', $lines) ? 'EXECUTED' : null,
         ];
+    }
+
+    /** @return list<string> */
+    private function lines(string $pass): array
+    {
+        return array_values(array_filter(
+            array_map(fn (string $line) => trim(Digits::fold((string) preg_replace('/\p{Cf}/u', '', $line))), explode("\n", $pass)),
+            fn (string $line) => $line !== '',
+        ));
+    }
+
+    /**
+     * How many confirmations one pass saw: the most any per-confirmation label, amount row or wallet label counts.
+     *
+     * @param  list<string>  $lines
+     * @param  list<int|false>  $amounts
+     * @param  list<string|false>  $wallets
+     */
+    private function transfers(array $lines, array $amounts, array $wallets): int
+    {
+        $text = implode("\n", $lines);
+
+        return max(count($amounts), count($wallets), ...array_map(fn (string $label) => preg_match_all($label, $text), self::PER_TRANSFER));
     }
 
     /**
@@ -125,13 +166,17 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
             }
 
             $numbers = [];
+            $garbled = false;
             for (; $k < $count && count($numbers) < count($labels) && preg_match(self::VALUE_LINE, $lines[$k]); $k++) {
                 preg_match_all(self::NUMBER, $lines[$k], $m);
                 array_push($numbers, ...$m[0]);
+                // A token with digits that isn't a whole number ("1O," of "1O, 384.00") spoils the row: what is left
+                // of it ("384.00") is not the amount.
+                $garbled = $garbled || preg_match_all('/\S*\d\S*/', $lines[$k]) !== count($m[0]);
             }
             $k--;
 
-            $amounts[] = $this->amount($labels, $numbers);
+            $amounts[] = $garbled ? false : $this->amount($labels, $numbers);
         }
 
         return $amounts;

@@ -4,7 +4,9 @@ namespace Modules\TransactionVerification\Tests\Unit;
 
 use Carbon\CarbonImmutable;
 use Modules\TransactionVerification\Data\ExtractedFields;
+use Modules\TransactionVerification\Enums\ReceiptFormatEnum;
 use Modules\TransactionVerification\Services\Parsers\InstaPayReceiptParser;
+use Modules\TransactionVerification\Services\Parsers\ReceiptRouter;
 use Modules\TransactionVerification\Services\Phone;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Modules\TransactionVerification\Tests\TestCase;
@@ -350,9 +352,12 @@ class InstaPayReceiptParserTest extends TestCase
             $this->markTestSkipped('Needs the recorded receipts in tests/fixtures/ocr/ (local only, not in git).');
         }
 
-        $fields = $this->parse((string) file_get_contents($path));
+        $text = (string) file_get_contents($path);
+        $fields = $this->parse($text);
 
         $this->assertSame([$amount, $phone], [$fields->amountMinor, Phone::normalise($fields->phone)]);
+        // The real text reaches this parser through the router too.
+        $this->assertSame(ReceiptFormatEnum::INSTAPAY, (new ReceiptRouter)->parse($text)->format);
         $this->assertNotNull($fields->reference);
     }
 

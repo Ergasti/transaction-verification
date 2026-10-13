@@ -116,7 +116,8 @@ Any one signal is enough, so a renamed label doesn't lose a format. A layout tha
 
 **Adding a format:** add a `ReceiptFormatEnum` case, then write a parser that implements `ReceiptParser` and
 `RecognisesReceipts` (`recognises()` and `format()`) and uses `VotesAcrossPasses` (`read()` for one pass and
-`currency()`), and add it to `transaction-verification.parsers`. PHP refuses the class if one of them is missing. The
+`currency()`), and add it to `transaction-verification.parsers`. PHP refuses the class if a method is missing, and the
+router throws for a `parsers` entry that doesn't implement `RecognisesReceipts`. The
 order matters: the first parser that recognises the text reads it.
 
 ## Verdicts

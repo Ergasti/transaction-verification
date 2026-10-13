@@ -16,7 +16,10 @@
   for a split payout: the amounts are added up, and each must name the same wallet.
 - The default `parser` is now `ReceiptRouter`. It hands the text to the first of `parsers` (InstaPay, then AlexBank)
   that recognises it. Text none recognises reads nothing and comes back `unreadable`. An app that set its own `parser`
-  is unaffected.
+  is unaffected. A `parsers` entry that doesn't implement `RecognisesReceipts` is a configuration error (an
+  exception), not skipped. One narrow change: an InstaPay screenshot where every pass lost both the amount label and
+  the `@instapay` address is now `unrecognised`, so its reference isn't read and a reused one shows as `unreadable`
+  rather than `duplicate` (an identical file is still caught by its hash; both go to a person).
 - Each reading records its `format` (`instapay`, `alexbank`, `unrecognised`); results show it, and the shadow report
   has a `format` column.
 - `shadow-report --subject-type=` lists another caller's checks (default `affiliate_payout`).

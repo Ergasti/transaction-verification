@@ -68,7 +68,7 @@ class ReceiptRouterTest extends TestCase
         $this->assertTrue((new \ReflectionMethod(VotesAcrossPasses::class, 'currency'))->isAbstract());
     }
 
-    public function test_a_configured_parser_that_cannot_recognise_is_skipped(): void
+    public function test_a_configured_parser_that_cannot_recognise_is_a_configuration_error(): void
     {
         $this->app->instance('test.blind-parser', new class implements ReceiptParser
         {
@@ -79,6 +79,9 @@ class ReceiptRouterTest extends TestCase
         });
         config(['transaction-verification.parsers' => ['test.blind-parser', InstaPayReceiptParser::class]]);
 
-        $this->assertSame(307000, (new ReceiptRouter)->parse(self::INSTAPAY)->amountMinor);
+        // Skipped quietly, every receipt of its format would come back unreadable with nothing saying why.
+        $this->expectExceptionMessage('test.blind-parser in transaction-verification.parsers must implement RecognisesReceipts.');
+
+        (new ReceiptRouter)->parse(self::INSTAPAY);
     }
 }

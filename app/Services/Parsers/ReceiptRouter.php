@@ -18,7 +18,12 @@ class ReceiptRouter implements ReceiptParser
         foreach (config('transaction-verification.parsers') as $class) {
             $parser = app($class);
 
-            if ($parser instanceof RecognisesReceipts && $parser->recognises($text)) {
+            // A configuration error, not a receipt: said loudly, so a parser that can never be asked is noticed.
+            if (! $parser instanceof RecognisesReceipts) {
+                throw new \InvalidArgumentException("{$class} in transaction-verification.parsers must implement RecognisesReceipts.");
+            }
+
+            if ($parser->recognises($text)) {
                 return ExtractedFields::fromArray(['format' => $parser->format()->value] + $parser->parse($text)->toArray());
             }
         }
