@@ -10,7 +10,7 @@ use Modules\TransactionVerification\Models\TransactionVerification;
 use Modules\TransactionVerification\Models\TransactionVerificationDuplicate;
 use Modules\TransactionVerification\Services\Ocr\NullEngine;
 use Modules\TransactionVerification\Services\Ocr\TesseractEngine;
-use Modules\TransactionVerification\Services\Parsers\InstaPayReceiptParser;
+use Modules\TransactionVerification\Services\Parsers\ReceiptRouter;
 use Modules\TransactionVerification\Services\TransactionVerificationService;
 use Modules\TransactionVerification\Tests\TestCase;
 
@@ -20,7 +20,7 @@ class ModuleBootTest extends TestCase
     public function test_contracts_resolve_to_their_implementations(): void
     {
         $this->assertInstanceOf(TransactionVerificationService::class, app(TransactionVerifier::class));
-        $this->assertInstanceOf(InstaPayReceiptParser::class, app(ReceiptParser::class));
+        $this->assertInstanceOf(ReceiptRouter::class, app(ReceiptParser::class));
     }
 
     public function test_the_engine_follows_config(): void
@@ -53,7 +53,7 @@ class ModuleBootTest extends TestCase
     public function test_the_parser_follows_config(): void
     {
         // Resolved once first, so a singleton binding (stuck on the first parser) would fail below.
-        $this->assertInstanceOf(InstaPayReceiptParser::class, app(ReceiptParser::class));
+        $this->assertInstanceOf(ReceiptRouter::class, app(ReceiptParser::class));
         config(['transaction-verification.parser' => StubReceiptParser::class]);
 
         $this->assertInstanceOf(StubReceiptParser::class, app(ReceiptParser::class));

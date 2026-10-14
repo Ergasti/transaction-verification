@@ -79,14 +79,14 @@ class MatcherTest extends TestCase
     #[DataProvider('cases')]
     public function test_verdict(ExpectedDestination $expected, ExtractedFields $found, array $duplicates, VerdictEnum $verdict): void
     {
-        $this->assertSame($verdict, (new Matcher)->decide(self::AMOUNT, $expected, $found, $duplicates, 0.80)['verdict']);
+        $this->assertSame($verdict, (new Matcher)->decide(self::AMOUNT, [$expected], $found, $duplicates, 0.80)['verdict']);
     }
 
     public function test_missing_reference_is_recorded_but_does_not_change_the_verdict(): void
     {
         $decision = (new Matcher)->decide(
             self::AMOUNT,
-            new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE),
+            [new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE)],
             new ExtractedFields(amountMinor: self::AMOUNT, phone: self::PHONE),
             [],
             0.80,
@@ -110,7 +110,7 @@ class MatcherTest extends TestCase
     {
         $decision = (new Matcher)->decide(
             self::AMOUNT,
-            new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE),
+            [new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE)],
             new ExtractedFields(amountMinor: self::AMOUNT, phone: self::PHONE),
             [['id' => 1, 'uuid' => 'a', 'method' => 'sha256'], ['id' => 1, 'uuid' => 'a', 'method' => 'reference']],
             0.80,
@@ -126,12 +126,103 @@ class MatcherTest extends TestCase
             [new ExpectedDestination(DestinationTypeEnum::INSTAPAY_HANDLE, 'creator@instapay'), new ExtractedFields(amountMinor: 1, handle: 'other@instapay')],
             [new ExpectedDestination(DestinationTypeEnum::BANK, '1000000000000000010'), new ExtractedFields(amountMinor: 1, account: '1000000000000000011')],
         ] as [$expected, $found]) {
-            $checks = (new Matcher)->decide(self::AMOUNT, $expected, $found, [], 0.80)['checks'];
+            $checks = (new Matcher)->decide(self::AMOUNT, [$expected], $found, [], 0.80)['checks'];
             $json = json_encode(array_map(fn ($check) => $check->toArray(), $checks));
 
             $this->assertStringNotContainsString('0100000000', $json);
             $this->assertStringNotContainsString('instapay', $json);
             $this->assertStringNotContainsString('000000000000', $json);
         }
+    }
+
+    /** @return array<string, array{list<ExpectedDestination>, ExtractedFields, VerdictEnum}> */
+    public static function anyOf(): array
+    {
+        $phone = new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE);
+        $handle = new ExpectedDestination(DestinationTypeEnum::INSTAPAY_HANDLE, 'creator@instapay');
+        $iban = new ExpectedDestination(DestinationTypeEnum::BANK, 'EG38 0019 0005 0000 0000 0000 0010');
+
+        return [
+            'bank paid by instapay to its phone' => [[$iban, $phone], new ExtractedFields(amountMinor: self::AMOUNT, phone: self::PHONE), VerdictEnum::MATCH],
+            'phone differs from the method phone' => [[$iban, $phone], new ExtractedFields(amountMinor: self::AMOUNT, phone: '01000000002'), VerdictEnum::MISMATCH],
+            'nothing read goes to a person' => [[$iban, $phone], new ExtractedFields(amountMinor: self::AMOUNT), VerdictEnum::NEEDS_REVIEW],
+            'handle method paid to its phone' => [[$handle, $phone], new ExtractedFields(amountMinor: self::AMOUNT, phone: self::PHONE), VerdictEnum::MATCH],
+            'handle differs, no phone shown' => [[$handle, $phone], new ExtractedFields(amountMinor: self::AMOUNT, handle: 'someone@instapay'), VerdictEnum::MISMATCH],
+            'primary matches, alternative differs' => [[$phone, new ExpectedDestination(DestinationTypeEnum::PHONE, '01000000002')], new ExtractedFields(amountMinor: self::AMOUNT, phone: self::PHONE), VerdictEnum::MATCH],
+            'confidence of the matched phone decides' => [[$iban, $phone], new ExtractedFields(amountMinor: self::AMOUNT, phone: self::PHONE, confidence: ['phone' => 0.5, 'account' => 1.0]), VerdictEnum::NEEDS_REVIEW],
+        ];
+    }
+
+    #[DataProvider('anyOf')]
+    public function test_any_of_the_destinations_decides(array $expected, ExtractedFields $found, VerdictEnum $verdict): void
+    {
+        $this->assertSame($verdict, (new Matcher)->decide(self::AMOUNT, $expected, $found, [], 0.80)['verdict']);
+    }
+
+    public function test_the_confidence_comes_from_the_destination_that_matched(): void
+    {
+        $decision = (new Matcher)->decide(
+            self::AMOUNT,
+            [new ExpectedDestination(DestinationTypeEnum::BANK, 'EG38 0019 0005 0000 0000 0000 0010'), new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE)],
+            new ExtractedFields(amountMinor: self::AMOUNT, phone: self::PHONE, confidence: ['phone' => 0.5, 'account' => 1.0]),
+            [],
+            0.80,
+        );
+
+        // Only the phone's score: the account was never read, so its 1.0 must not count.
+        $this->assertSame(0.5, $decision['confidence']);
+        $this->assertSame(VerdictEnum::NEEDS_REVIEW, $decision['verdict']);
+    }
+
+    public function test_the_primary_decides_a_tie(): void
+    {
+        $both = new ExtractedFields(amountMinor: self::AMOUNT, phone: self::PHONE, handle: 'creator@instapay');
+        $phone = new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE);
+        $handle = new ExpectedDestination(DestinationTypeEnum::INSTAPAY_HANDLE, 'creator@instapay');
+
+        $this->assertSame(['amount', 'handle'], (new Matcher)->decidingKeys([$handle, $phone], $both));
+        $this->assertSame(['amount', 'phone'], (new Matcher)->decidingKeys([$phone, $handle], $both));
+    }
+
+    /** @return array<string, array{int, int, CheckOutcomeEnum}> */
+    public static function amounts(): array
+    {
+        return [
+            'exact' => [1790659, 1790659, CheckOutcomeEnum::PASS],
+            'piastres dropped' => [1790659, 1790600, CheckOutcomeEnum::PASS],
+            'rounded up' => [1790659, 1790700, CheckOutcomeEnum::FAIL],
+            'piastres partly dropped' => [1790659, 1790650, CheckOutcomeEnum::FAIL],
+            'whole pounds exact' => [1790600, 1790600, CheckOutcomeEnum::PASS],
+            'whole pounds, one short' => [1790600, 1790500, CheckOutcomeEnum::FAIL],
+        ];
+    }
+
+    #[DataProvider('amounts')]
+    public function test_amount(int $expected, int $found, CheckOutcomeEnum $outcome): void
+    {
+        $checks = (new Matcher)->decide(
+            $expected,
+            [new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE)],
+            new ExtractedFields(amountMinor: $found, phone: self::PHONE),
+            [],
+            0.80,
+        )['checks'];
+
+        $this->assertSame($outcome, $checks['amount']->outcome);
+    }
+
+    public function test_checks_never_carry_an_alternative_destination(): void
+    {
+        $checks = (new Matcher)->decide(
+            self::AMOUNT,
+            [new ExpectedDestination(DestinationTypeEnum::INSTAPAY_HANDLE, 'creator@instapay'), new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE)],
+            new ExtractedFields(amountMinor: 1, phone: '01000000002', handle: 'other@instapay'),
+            [],
+            0.80,
+        )['checks'];
+        $json = json_encode(array_map(fn ($check) => $check->toArray(), $checks));
+
+        $this->assertStringNotContainsString('0100000000', $json);
+        $this->assertStringNotContainsString('instapay', $json);
     }
 }

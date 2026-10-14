@@ -4,6 +4,7 @@ namespace Modules\TransactionVerification\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
+use Modules\TransactionVerification\Data\ExtractedFields;
 use Modules\TransactionVerification\Enums\CheckEnum;
 use Modules\TransactionVerification\Models\TransactionVerification;
 
@@ -13,7 +14,8 @@ class ShadowReportCommand extends Command
     private const DEFAULT_DAYS = 14;
 
     protected $signature = 'transaction-verification:shadow-report
-        {--since= : Y-m-d, default '.self::DEFAULT_DAYS.' days ago}';
+        {--since= : Y-m-d, default '.self::DEFAULT_DAYS.' days ago}
+        {--subject-type=affiliate_payout : The subject_type the caller submits, e.g. payout_transaction}';
 
     protected $description = 'List payout receipt checks as CSV, with an empty label column.';
 
@@ -32,11 +34,12 @@ class ShadowReportCommand extends Command
 
         $checks = [CheckEnum::AMOUNT->value, CheckEnum::DESTINATION->value, CheckEnum::DUPLICATE->value];
 
-        $this->csv(['uuid', 'subject_id', 'created_at', 'status', 'verdict', 'confidence', ...$checks, 'label']);
+        // format: which layout read it (instapay, alexbank, unrecognised), so the gate is measured per format.
+        $this->csv(['uuid', 'subject_id', 'created_at', 'status', 'verdict', 'format', 'confidence', ...$checks, 'label']);
 
         // Only what the report prints, in batches.
-        $rows = TransactionVerification::where('subject_type', 'affiliate_payout')->where('created_at', '>=', $since->startOfDay())
-            ->select(['id', 'uuid', 'subject_id', 'created_at', 'status', 'verdict', 'confidence', 'checks']);
+        $rows = TransactionVerification::where('subject_type', (string) $this->option('subject-type'))->where('created_at', '>=', $since->startOfDay())
+            ->select(['id', 'uuid', 'subject_id', 'created_at', 'status', 'verdict', 'confidence', 'checks', 'extracted']);
 
         foreach ($rows->lazyById(500) as $row) {
             $this->csv([
@@ -45,6 +48,7 @@ class ShadowReportCommand extends Command
                 $row->created_at?->toDateTimeString(),
                 $row->status->value,
                 $row->verdict?->value,
+                ExtractedFields::fromArray($row->extracted ?? [])->format?->value,
                 $row->confidence,
                 ...array_map(fn (string $check) => $row->checks[$check]['outcome'] ?? '', $checks),
                 '',

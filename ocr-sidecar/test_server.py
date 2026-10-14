@@ -72,6 +72,44 @@ class LinesTest(unittest.TestCase):
         self.assertEqual(server.lines(self.image, SimpleNamespace(boxes=None, txts=None)), [])
 
 
+class SlicesTest(unittest.TestCase):
+    def setUp(self):
+        # Small images stand in for big ones: only their shape relative to the cap matters.
+        self.addCleanup(setattr, server, "MAX_SIDE", server.MAX_SIDE)
+        server.MAX_SIDE = 300
+
+    @staticmethod
+    def page(height, width=100, text_rows=()):
+        """White, with black bands (lines of text) at the given (top, bottom) rows."""
+        image = np.full((height, width, 3), 255, np.uint8)
+        for top, bottom in text_rows:
+            image[top:bottom] = 0
+        return image
+
+    def test_an_image_up_to_a_page_and_a_half_tall_is_read_whole(self):
+        image = self.page(400, width=300)
+
+        self.assertEqual([p.shape for p in server.slices(image)], [image.shape])
+
+    def test_a_tall_image_the_cap_does_not_shrink_is_read_whole(self):
+        # A phone screenshot: twice as tall as wide, but within the cap, so it is read at full size anyway.
+        image = self.page(280, width=130)
+
+        self.assertEqual([p.shape for p in server.slices(image)], [image.shape])
+
+    def test_a_tall_image_is_cut_into_page_shaped_slices_on_empty_rows_covering_it_all(self):
+        # Text everywhere except one empty row per page, off the exact target (140), inside the window (120-160).
+        rows = [(0, 126), (127, 280), (281, 400)]
+        image = self.page(400, text_rows=rows)
+
+        pieces = server.slices(image)
+
+        self.assertEqual([len(p) for p in pieces], [126, 154, 120])
+        self.assertEqual(sum(len(p) for p in pieces), 400)
+        # Each cut lands on the empty row, so every piece starts on it and no text row is split.
+        self.assertTrue(all((p[0] == 255).all() for p in pieces[1:]))
+
+
 class HandlerTest(unittest.TestCase):
     def setUp(self):
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
@@ -120,6 +158,18 @@ class HandlerTest(unittest.TestCase):
             status, body = self.post(self.png)
 
             self.assertEqual((status, body["lines"], body["ms"]["detect"], body["ms"]["recognise"]), (200, [], 0, 0))
+
+    def test_a_tall_image_is_read_slice_by_slice_and_its_lines_joined_in_order(self):
+        self.addCleanup(setattr, server, "MAX_SIDE", server.MAX_SIDE)
+        server.MAX_SIDE = 300
+        server.ENGINE = FakeEngine([(box(0, 0, 50, 20), "Amount")], elapse=[0.010, None, 0.020])
+        tall = cv2.imencode(".png", np.full((400, 100), 255, np.uint8))[1].tobytes()
+
+        status, body = self.post(tall)
+
+        self.assertEqual((status, body["lines"]), (200, ["Amount"] * 3))
+        self.assertEqual([shape for shape, _ in server.ENGINE.calls], [(140, 100), (140, 100), (120, 100)])
+        self.assertEqual((body["ms"]["detect"], body["ms"]["recognise"]), (30, 60))
 
     def test_a_body_that_is_not_an_image_is_refused(self):
         server.ENGINE = FakeEngine([])

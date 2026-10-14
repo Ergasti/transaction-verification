@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.5.1
+
+- The RapidOCR sidecar reads a big tall image (taller than its 1600 px cap and than 1.5 widths: receipts stacked, a
+  long screenshot) in page-shaped slices, each cut at the emptiest row near a page's length, and joins their lines in
+  order. Before, the whole image was shrunk to fit 1600 px, so two stacked AlexBank confirmations (2479 x 7016) were
+  read 565 px wide and their wallet number came out wrong, sending the receipt to review. Now each slice is read like a
+  single page (measured: 2 slices, 3.7 s, wallet right; reading it whole at full size took 10.8 s and 4 GB). Images up
+  to a page (A4 is 1.41 widths) and phone screenshots within the cap are read whole, exactly as before. The PHP side
+  is unchanged; deploy the `0.5.1` sidecar image.
+- On `second_engine` `always`, an AlexBank confirmation can stop after the first Tesseract passes when they and
+  RapidOCR agree on the amount and the wallet. Waiting for a reference, which that layout never prints, made every
+  AlexBank receipt read all four passes (about twice as long). InstaPay still needs its reference to stop early.
+
+## 0.5.0
+
+- `VerificationRequest` takes optional `alternativeDestinations`: other places the money may rightly have gone. The
+  receipt passes on any of them (e.g. a bank account paid by InstaPay to the payee's phone). Rows stored by 0.4 keep
+  working. The blind index still covers only `expectedDestination`.
+  - With alternatives, the best outcome decides, so some verdicts move: a phone that differs from an alternative phone
+    is a `mismatch`, and a missing account number next to an unread phone is `needs_review` (it was `unreadable`).
+  - In `second_engine` `fallback` mode, a phone read surely that differs counts as sure, so RapidOCR is not asked.
+    The default `always` mode reads every receipt with both engines and is unaffected.
+- The amount also passes with the piastres dropped (17,906.59 expected, 17,906 read), since banks send whole pounds;
+  rounding up still fails. Such receipts move from `mismatch` (or `needs_review` when the amount was read unsurely) to
+  `match`. The rule assumes a currency with 2 decimals, like EGP.
+- AlexBank "Pay someone" confirmations are read (`AlexBankReceiptParser`), including several stacked in one image
+  for a split payout: the amounts are added up, and each must name the same wallet.
+- The default `parser` is now `ReceiptRouter`. It hands the text to the first of `parsers` (InstaPay, then AlexBank)
+  that recognises it. Text none recognises reads nothing and comes back `unreadable`. An app that set its own `parser`
+  is unaffected. A `parsers` entry that doesn't implement `RecognisesReceipts` is a configuration error (an
+  exception), not skipped. InstaPay verdicts change only where the text no longer says InstaPay: a screenshot where
+  every pass lost both the amount label and the `@instapay` address reads nothing but its reference (`unrecognised`,
+  also when it names the sender's bank: a parser that reads nothing off the text doesn't claim it), so it comes back
+  `unreadable` and a person looks; a later clean copy is still a `duplicate`. An AlexBank confirmation that lost all its labels keeps the sender's 12-digit account as that
+  reference, so two such receipts from one account show as duplicates (a person looks at both). The second engine's text is read
+  as the format the first engine recognised, even when it lost those words, unless the first engine read nothing off
+  that format; then the second engine's own reading and format stand. Text OCR read nothing from is `unrecognised`
+  too. An InstaPay screenshot whose note holds AlexBank's upper-case labels ("WALLET NUMBER", or a line starting
+  "PAY SOMEONE" or "BENEFICIARY NAME") is not taken for InstaPay either, so it comes back `unreadable` (recorded as
+  `alexbank` when it also names the sender's bank).
+- Each reading records its `format` (`instapay`, `alexbank`, `unrecognised`); results show it, and the shadow report
+  has a `format` column.
+- `shadow-report --subject-type=` lists another caller's checks (default `affiliate_payout`).
+- Images up to 30 M pixels are read (was 8 M): AlexBank exports A4 at 300 dpi, 8.7 M pixels a page.
+
 ## 0.4.1
 
 - Laravel 11 is supported next to 12 (`laravel/framework: ^11.0|^12.0`); the test suite runs on both.

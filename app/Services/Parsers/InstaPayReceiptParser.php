@@ -3,7 +3,8 @@
 namespace Modules\TransactionVerification\Services\Parsers;
 
 use Modules\TransactionVerification\Contracts\ReceiptParser;
-use Modules\TransactionVerification\Data\ExtractedFields;
+use Modules\TransactionVerification\Contracts\RecognisesReceipts;
+use Modules\TransactionVerification\Enums\ReceiptFormatEnum;
 use Modules\TransactionVerification\Services\AmountParser;
 use Modules\TransactionVerification\Services\DateParser;
 use Modules\TransactionVerification\Services\Digits;
@@ -16,8 +17,10 @@ use Modules\TransactionVerification\Services\Digits;
  * Confidence is agreement between the passes, not OCR accuracy: the passes read one image, so an error
  * they all share still scores 1.0. The rules below refuse the shapes such errors take.
  */
-class InstaPayReceiptParser implements ReceiptParser
+class InstaPayReceiptParser implements ReceiptParser, RecognisesReceipts
 {
+    use VotesAcrossPasses;
+
     private const PHONE = '/(?<![\d+])(?:\+20|0020|0)1\d{9}(?!\d)/';
 
     // A whole address only: no piece of "alice@instapay.com" or "alice+shop@instapay".
@@ -38,51 +41,41 @@ class InstaPayReceiptParser implements ReceiptParser
     // case and with or without a colon, or the footer.
     private const SECTION_END = '/^(Reference|Date|Note|More\s+Details)\b|المرجع|التاريخ|ملاحظة|POWERED\s+BY|(?<![\p{L}\p{N}])(From|من)(?![\p{L}\p{N}])/iu';
 
-    private const NOTE = '/^Note\b|ملاحظة/iu';
+    // A bank's own transfer confirmation (AlexBank's upper-case labels): InstaPay prints title case, and names a bank
+    // only as the sender's ("ALEXBANK").
+    private const BANK_ORDER = '/^(?:PAY\s+SOMEONE|BENEFICIARY\s+NAME)\b|\bWALLET\s+NUMBER\b/m';
 
-    // ExtractedFields key => confidence key the Matcher reads.
-    private const SCORED = ['amount_minor' => 'amount', 'phone' => 'phone', 'handle' => 'handle', 'account' => 'account', 'reference' => 'reference'];
+    private const NOTE = '/^Note\b|ملاحظة/iu';
 
     public function __construct(
         private readonly AmountParser $amounts,
         private readonly DateParser $dates,
     ) {}
 
-    public function parse(string $text): ExtractedFields
+    /**
+     * Its amount label, or an InstaPay address: either alone is enough. The label on one line only: AlexBank's
+     * "CASH TRANSFER" sits right above its "AMOUNT" label. Never a bank's own confirmation, whose description can
+     * say either.
+     */
+    public function recognises(string $text): bool
     {
-        $passes = array_filter(explode("\f", $text), fn (string $pass) => trim($pass) !== '');
-        $reads = array_map(fn (string $pass) => $this->read($pass), array_values($passes));
+        return (preg_match('/Transfer\h+Amount|المحول/iu', $text) === 1 || preg_match(self::HANDLE, $text) === 1)
+            && preg_match(self::BANK_ORDER, $text) !== 1;
+    }
 
-        $fields = [];
-        $confidence = [];
+    public function format(): ReceiptFormatEnum
+    {
+        return ReceiptFormatEnum::INSTAPAY;
+    }
 
-        foreach (['amount_minor', 'phone', 'handle', 'account', 'reference', 'occurred_at', 'status_text', 'note'] as $key) {
-            // false = the pass saw two candidates: it counts against the winner but can't win.
-            $values = array_values(array_filter(array_column($reads, $key), fn ($value) => $value !== null));
-            [$fields[$key], $share] = $this->vote($values);
-
-            if ($fields[$key] !== null && isset(self::SCORED[$key])) {
-                $confidence[self::SCORED[$key]] = $share;
-            }
-        }
-
-        return new ExtractedFields(
-            amountMinor: $fields['amount_minor'],
-            // InstaPay is EGP-only, and the orange currency never OCRs reliably.
-            currency: $fields['amount_minor'] === null ? null : 'EGP',
-            phone: $fields['phone'],
-            handle: $fields['handle'],
-            account: $fields['account'],
-            reference: $fields['reference'],
-            occurredAt: $fields['occurred_at'],
-            statusText: $fields['status_text'],
-            note: $fields['note'],
-            confidence: $confidence,
-        );
+    /** InstaPay is EGP-only, and the orange currency never OCRs reliably. */
+    protected function currency(): string
+    {
+        return 'EGP';
     }
 
     /** @return array<string, mixed> the fields one pass could read */
-    private function read(string $pass): array
+    protected function read(string $pass): array
     {
         $lines = array_values(array_filter(
             array_map(fn (string $line) => trim(Digits::fold((string) preg_replace('/\p{Cf}/u', '', $line))), explode("\n", $pass)),
@@ -243,24 +236,5 @@ class InstaPayReceiptParser implements ReceiptParser
         };
 
         return trim($note) === '' ? null : trim($note);
-    }
-
-    /** @return array{mixed, float} the most common value (ties: the earliest pass) and its share of the passes that read one */
-    private function vote(array $values): array
-    {
-        $tally = [];
-        foreach (array_filter($values, fn ($value) => $value !== false) as $value) {
-            $tally[(string) $value] ??= [$value, 0];
-            $tally[(string) $value][1]++;
-        }
-
-        $best = null;
-        foreach ($tally as $entry) {
-            if ($best === null || $entry[1] > $best[1]) {
-                $best = $entry;
-            }
-        }
-
-        return $best === null ? [null, 0.0] : [$best[0], round($best[1] / count($values), 3)];
     }
 }

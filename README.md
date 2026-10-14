@@ -16,7 +16,7 @@ A Laravel 11 or 12 package (PHP 8.3+). The namespace is `Modules\TransactionVeri
 
 ```json
 "repositories": [{"type": "vcs", "url": "https://github.com/Ergasti/transaction-verification"}],
-"require": {"ergasti/transaction-verification": "^0.4"}
+"require": {"ergasti/transaction-verification": "^0.5"}
 ```
 
 ```bash
@@ -55,7 +55,7 @@ disk until the request ends.
 
 ```yaml
 ocr_rapid:
-  image: ghcr.io/ergasti/transaction-verification-ocr:0.4.0   # the same version as the package
+  image: ghcr.io/ergasti/transaction-verification-ocr:0.5.1   # the same version as the package
   restart: always
   mem_limit: 2g
   cpus: 4
@@ -100,6 +100,26 @@ limit), so a person looks at that receipt. No queue worker is needed.
 Without Tesseract (a laptop), set `TRANSACTION_VERIFICATION_ENGINE=null`: receipts still get a row, and without the
 RapidOCR container they come back `unreadable`.
 
+## Formats
+
+A router reads each receipt with the first parser that recognises it, and records which one as `format`:
+
+| `format` | Receipt | Notes |
+|---|---|---|
+| `instapay` | InstaPay app, English or Arabic, old and new layout | Recognised by its "Transfer Amount" (المحول) label or an `@instapay` address, unless the text has AlexBank's labels (a sender can type either into AlexBank's description) |
+| `alexbank` | AlexBank "Pay someone" confirmation (A4 export) | Recognised by "ALEXBANK", "PAY SOMEONE", "BENEFICIARY NAME" or "MOBILE WALLET NUMBER". Several confirmations stacked in one image (a split payout) are added up, and each must name the same wallet. It has no reference number |
+| `unrecognised` | Anything else | Nothing is read but a reference-shaped number (so a later copy is still a `duplicate`), so it comes back `unreadable` and a person looks |
+
+Any one signal is enough, so a renamed label doesn't lose a format. A layout that changes more falls to
+`unrecognised`, which the shadow report shows. A tall stack of confirmations reads less well on the second engine
+(it shrinks the image to 1600 px), so a stacked receipt can land in `needs_review` where the engines disagree.
+
+**Adding a format:** add a `ReceiptFormatEnum` case, then write a parser that implements `ReceiptParser` and
+`RecognisesReceipts` (`recognises()` and `format()`) and uses `VotesAcrossPasses` (`read()` for one pass and
+`currency()`), and add it to `transaction-verification.parsers`. PHP refuses the class if a method is missing, and the
+router throws for a `parsers` entry that doesn't implement `RecognisesReceipts`. The
+order matters: the first parser that recognises the text reads it.
+
 ## Verdicts
 
 The first rule that applies wins:
@@ -111,6 +131,9 @@ The first rule that applies wins:
 | `mismatch` | The amount or the destination was read surely and is different from what was expected |
 | `needs_review` | Both match, but the destination can't be confirmed (e.g. a handle was expected and only a phone is shown, or a bank account's digits differ) or a deciding field is unsure, including one that differs but the two engines read differently; a person decides |
 | `match` | Amount and destination read with confidence, by both engines, and equal to what was expected |
+
+The amount also matches with the piastres dropped (17,906.59 expected, 17,906 on the receipt), since banks send
+whole pounds. Rounded up (17,907) it does not. The rule assumes a currency with 2 decimals, like EGP.
 
 None of them blocks anything: `unreadable`, `mismatch` and `needs_review` all mean "a person should look".
 
@@ -129,6 +152,12 @@ binding, so check `app()->bound(...)` and skip quietly.
 | `find(uuid)` / `latestFor(subjectType, subjectId)` | The result, or null |
 
 A result's `extracted` holds what was read, masked: phone `********001`, account `****0010`, handle `so***@instapay`.
+
+**More than one place the money may rightly go:** pass the others as `alternativeDestinations`, and the receipt
+passes on any of them. For example, a payee's bank account is also reachable by their phone on InstaPay, so a
+receipt that shows only that phone is still right. Send the account as `expectedDestination` and the phone as an
+alternative. The best outcome decides: a match on any of them beats a phone that differs, and a phone that differs
+beats a missing account number.
 
 `TransactionVerificationCompleted` (uuid, subject, verdict, checks; never a phone) fires each time a check stores
 a verdict, and again for another subject's receipt that becomes a `duplicate` because its original was checked later.
@@ -286,12 +315,14 @@ in [Signing](#signing).
   where your app keeps it (the package doesn't), compare it with what was paid (by `subject_id`), and note in `label`
   which outcomes were wrong (e.g. `amount wrong`), never the values themselves. A field counts right when its outcome
   was right. The gate is 98% on at least 50 receipts. The CSV holds no phones, accounts or amounts. `--since` takes
-  `YYYY-MM-DD` only.
+  `YYYY-MM-DD` only. Each line also has the receipt's `format`, so the gate can be judged per format. The report
+  lists `affiliate_payout` checks by default; another caller passes its own, e.g. `--subject-type=payout_transaction`.
 - **The spec** in `openapi/` is generated by Scramble (`dedoc/scramble`) from the controller's attributes in a host
   app. Re-export it after changing the API; `OpenApiRouteCoverageTest` fails when a route is missing from it.
 - **Speed:** each check logs `transaction-verification.timing`: milliseconds per step, and `passes` (2 when
   Tesseract stopped early because both engines agreed, 4 when it read them all). Numbers only, no receipt data.
-- **Other receipts:** `transaction-verification.parser` takes any `ReceiptParser` class.
+- **Other receipts:** see [Formats](#formats). `transaction-verification.parser` takes any `ReceiptParser` class in
+  place of the router; that one then reads every receipt.
 
 ## Developing
 

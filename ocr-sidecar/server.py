@@ -25,10 +25,11 @@ MAX_BYTES = 10 * 1024 * 1024
 # PP-OCRv5 mobile detector + Arabic v5 recognizer on OpenVINO, at most 1600 px a side: ~0.4 s a receipt on 4 cores
 # (OCR_THREADS). Reads the 15 real receipts as exactly as the old server detector (~3.5 s); lines() mends its splits.
 THREADS = int(os.environ.get("OCR_THREADS", "4"))
+MAX_SIDE = 1600
 ENGINE = RapidOCR(params={
     "Global.use_cls": False,
     "Global.log_level": "error",
-    "Global.max_side_len": 1600,
+    "Global.max_side_len": MAX_SIDE,
     "Det.engine_type": EngineType.OPENVINO,
     "Rec.engine_type": EngineType.OPENVINO,
     "EngineConfig.openvino.inference_num_threads": THREADS,
@@ -40,8 +41,16 @@ ENGINE = RapidOCR(params={
     "EngineConfig.onnxruntime.intra_op_num_threads": THREADS,
     "EngineConfig.onnxruntime.inter_op_num_threads": 1,
 })
-VERSION = f"rapidocr {version('rapidocr')} / PP-OCRv5 mobile det, arabic rec, openvino, max side 1600, rows joined"
+VERSION = f"rapidocr {version('rapidocr')} / PP-OCRv5 mobile det, arabic rec, openvino, max side 1600, rows joined, tall sliced"
 READING = threading.Lock()
+
+# The MAX_SIDE cap applies to the longest side, so a big tall image (receipts stacked, a long screenshot) is read
+# narrow and its digits too small: 2479 x 7016 was read 565 px wide and a wallet number came out wrong. One taller than
+# MAX_SIDE and than this many widths is read in page-shaped slices instead, each cut at the emptiest row near its end so
+# no line is split. A smaller one (a phone screenshot) is never shrunk, so it is read whole as before.
+SLICE_RATIO = 1.5
+SLICE_HEIGHT = 1.4  # widths: about an A4 page
+SLICE_WINDOW = 0.2  # widths either side of the target where a cut may land
 
 
 def lines(image, result):
@@ -61,6 +70,26 @@ def lines(image, result):
             rows.append(item)
 
     return [row["parts"][0][1] if len(row["parts"]) == 1 else reread(image, row) for row in rows]
+
+
+def slices(image):
+    """The image itself, or top-to-bottom page-shaped slices of a tall one, cut where the fewest pixels are dark."""
+    height, width = image.shape[:2]
+    if height <= MAX_SIDE or height <= SLICE_RATIO * width:
+        return [image]
+
+    grey = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    ink = (grey < 128).sum(axis=1)
+    pieces, top = [], 0
+    while height - top > SLICE_RATIO * width:
+        target, low = top + int(SLICE_HEIGHT * width), top + int((SLICE_HEIGHT - SLICE_WINDOW) * width)
+        window = ink[low:top + int((SLICE_HEIGHT + SLICE_WINDOW) * width)]
+        # The emptiest rows; of those, the one nearest a page's length.
+        emptiest = low + np.flatnonzero(window == window.min())
+        cut = int(emptiest[np.argmin(np.abs(emptiest - target))])
+        pieces.append(image[top:cut])
+        top = cut
+    return pieces + [image[top:]]
 
 
 def touching(a, b):
@@ -109,17 +138,21 @@ class Handler(BaseHTTPRequestHandler):
 
             try:
                 decoded = time.perf_counter()
-                # Every call names its steps: RapidOCR keeps the last call's use_* flags (reread() turns det off).
-                result = ENGINE(image, use_det=True, use_cls=False, use_rec=True)
-                read = time.perf_counter()
-                found = lines(image, result)
+                found, det, rec, join = [], 0, 0, 0
+                for piece in slices(image):
+                    # Every call names its steps: RapidOCR keeps the last call's use_* flags (reread() turns det off).
+                    result = ENGINE(piece, use_det=True, use_cls=False, use_rec=True)
+                    read = time.perf_counter()
+                    found += lines(piece, result)
+                    join += time.perf_counter() - read
+                    # Numbers only. RapidOCR times its own steps; an empty result may have none.
+                    piece_det, _, piece_rec = (list(getattr(result, "elapse_list", None) or []) + [0, 0, 0])[:3]
+                    det, rec = det + (piece_det or 0), rec + (piece_rec or 0)
             except Exception as e:  # noqa: BLE001 - any engine failure is a 500 the caller turns into a review
                 return self.reply(500, {"error": type(e).__name__})
 
         done = time.perf_counter()
-        # Numbers only. RapidOCR times its own steps; an empty result may have none.
-        det, _, rec = (list(getattr(result, "elapse_list", None) or []) + [0, 0, 0])[:3]
-        timings = {"decode": decoded - start, "detect": det, "recognise": rec, "join": done - read, "total": done - start}
+        timings = {"decode": decoded - start, "detect": det, "recognise": rec, "join": join, "total": done - start}
         self.reply(200, {"lines": found, "version": VERSION, "ms": {k: round((v or 0) * 1000) for k, v in timings.items()}})
 
     def reply(self, status, body):

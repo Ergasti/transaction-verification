@@ -302,7 +302,9 @@ Modules/TransactionVerification/
       Matcher.php                          # deterministic comparisons → verdict
       AmountParser.php, Digits.php, DateParser.php  # phone normalising reuses the app's normalizePhoneNumber()
       Ocr/{TesseractEngine,NullEngine}.php         # target also: PaddleOcrEngine, OllamaVlmEngine
-      Parsers/InstaPayReceiptParser.php            # English and Arabic app UI; target also: GenericReceiptParser
+      Parsers/ReceiptRouter.php                    # default parser: the first of config `parsers` that recognises the text
+      Parsers/{InstaPay,AlexBank}ReceiptParser.php # InstaPay app (English, Arabic); AlexBank "Pay someone" confirmation
+      Parsers/VotesAcrossPasses.php                # shared per-field vote across OCR passes; target also: GenericReceiptParser
       Preprocess/ImagePreprocessor.php             # GD: flatten, scale per pass, greyscale, palette threshold
     Jobs/ProcessVerificationJob.php        # queued; safe to dispatch twice (the service claims pending→processing atomically)
     Models/TransactionVerification.php
@@ -436,7 +438,7 @@ table. Make it configurable only if a deployment ever needs another connection.
 | engine, engine_version | string | e.g. `tesseract+rapidocr`, `5.5.0 + rapidocr 3.9.2 / …` (only `tesseract` when the second engine wasn't asked) |
 | ocr_text | longText, `encrypted` | raw text, kept for re-parsing and audit |
 | second_ocr_text | longText, `encrypted`, null | the second engine's text; null when it wasn't asked, '' when it read nothing or failed |
-| extracted | text, `encrypted:array` | `{amount_minor, currency, phone, handle, account, reference, occurred_at, status_text, note}` plus per-field confidence, after the second engine's check |
+| extracted | text, `encrypted:array` | `{amount_minor, currency, phone, handle, account, reference, occurred_at, status_text, note, format}` plus per-field confidence, after the second engine's check |
 | reference_hash | char(64), null | HMAC of the normalised reference; index |
 | checks | json | `{amount:{outcome,expected,found}, destination:{outcome}, duplicate:{outcome, of:[uuid…], by:[sha256|reference]}, reference:{outcome}}` with no plain personal data; `reference` is informational only |
 | confidence | decimal(4,3), null | lowest confidence among the fields that decided the verdict |
@@ -464,7 +466,8 @@ ProcessVerificationJob
                  1.5× at 0.80; size caps shrink all passes alike, so the 1.5× one stays smaller), each pass OCR'd, the parser votes per field; Tesseract runs single-threaded
   3. (removed: pHash, see §3 "Duplicates")
   4. OCR (configured engine) ─ plain text per pass; the parser votes, confidence = passes that agree
-  5. parse ─ pick parser by layout fingerprint (InstaPay/IPN first, generic fallback)
+  5. parse ─ pick parser by layout fingerprint (InstaPay/IPN first, then AlexBank; built in 0.5 as ReceiptRouter.
+             The generic fallback, a search for the expected values, waits on the unrecognised counts)
              label-anchored: "Transfer Amount" / "Reference" / "Date:" / "To" (+ Arabic labels)
   6. normalise ─ digits, amount → minor units, phone → 01XXXXXXXXX, date → Africa/Cairo
   7. second engine (RapidOCR sidecar) ─ 'always': reads the upright greyscale image, a deciding field counts only

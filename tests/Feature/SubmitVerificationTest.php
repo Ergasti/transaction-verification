@@ -27,6 +27,7 @@ use Modules\TransactionVerification\Models\TransactionVerification;
 use Modules\TransactionVerification\Services\TransactionVerificationService;
 use RuntimeException;
 use Modules\TransactionVerification\Tests\TestCase;
+use Modules\TransactionVerification\Tests\Unit\AlexBankReceiptParserTest;
 use Throwable;
 
 /** Submit → check in the same call → verdict → event. Generated images only: the real receipts are not in git. */
@@ -178,6 +179,38 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame(VerdictEnum::NEEDS_REVIEW, $this->verifier()->submit($this->request(key: 'disagreed'))->verdict);
     }
 
+    public function test_fallback_reads_the_second_engine_as_the_layout_tesseract_recognised(): void
+    {
+        // Tesseract recognised InstaPay but lost the phone; RapidOCR kept the phone but lost the words that tell InstaPay.
+        $this->reading(implode("\f", array_fill(0, 4, "3,070 EGP\nTransfer Amount\nTo Instapay")));
+        $this->secondReading('fallback', "3,070 EGP\nTo Instapay\n".self::PHONE);
+
+        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->submit($this->request())->verdict);
+    }
+
+    public function test_fallback_never_fills_from_another_layouts_reading(): void
+    {
+        // Tesseract read an AlexBank confirmation but not its amount. RapidOCR lost AlexBank's labels, and the description
+        // says "Transfer Amount", so on its own it reads as InstaPay: 9,999 off the description, not the 3,070 paid.
+        $this->reading(implode("\f", array_fill(0, 4, AlexBankReceiptParserTest::confirmation('IO 384.00', '00201000000001'))));
+        $this->secondReading('fallback', "AMOUNT\nFEE\n3,070.00 EGP\n100.00 EGP\nEXECUTION DATE\nDESCRIPTION\n9,999 EGP\nTransfer Amount");
+
+        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->submit($this->request())->verdict);
+    }
+
+    public function test_fallback_reads_an_instapay_receipt_tesseract_took_for_alexbank_by_the_senders_bank(): void
+    {
+        // Tesseract lost InstaPay's words but kept the sender's bank, so AlexBank took it and read nothing: RapidOCR's
+        // InstaPay reading stands, under its own format.
+        $this->reading(implode("\f", array_fill(0, 4, "From\nALEXBANK\n3,070 EGP\nTo Mobile Wallet\n".self::PHONE)));
+        $this->secondReading('fallback', "3,070 EGP\nTransfer Amount\nTo Mobile Wallet\n".self::PHONE."\nReference 100000000001");
+
+        $result = $this->verifier()->submit($this->request());
+
+        $this->assertSame(VerdictEnum::MATCH, $result->verdict);
+        $this->assertSame('instapay', TransactionVerification::where('uuid', $result->uuid)->first()->extracted['format']);
+    }
+
     public function test_a_matching_receipt_is_stored_and_verified(): void
     {
         Event::fake([TransactionVerificationCompleted::class]);
@@ -210,6 +243,23 @@ class SubmitVerificationTest extends TestCase
 
         $this->assertSame(VerdictEnum::DUPLICATE, $second->verdict);
         $this->assertSame([$first->uuid], $second->duplicateOf);
+    }
+
+    public function test_a_clean_copy_of_a_receipt_read_without_its_instapay_words_is_a_duplicate(): void
+    {
+        // The original lost "Transfer Amount" on every pass, so nothing recognised it (or AlexBank did, by the sender's
+        // bank, and read nothing): its reference still counts.
+        foreach (['Transaction Successful', "From\nALEXBANK"] as $subject => $top) {
+            $this->reading("{$top}\n3,070 EGP\nTo Mobile Wallet\n".self::PHONE."\nReference 10000000000{$subject}");
+            $first = $this->verifier()->submit($this->request(subjectId: 10 + $subject, width: 800 + $subject));
+
+            $this->reading(str_replace('100000000001', "10000000000{$subject}", self::RECEIPT));
+            $second = $this->verifier()->submit($this->request(subjectId: 20 + $subject, width: 900 + $subject));
+
+            $this->assertSame([VerdictEnum::UNREADABLE, VerdictEnum::DUPLICATE], [$first->verdict, $second->verdict], $top);
+            $this->assertSame([$first->uuid], $second->duplicateOf, $top);
+            $this->assertSame('unrecognised', TransactionVerification::where('uuid', $first->uuid)->first()->extracted['format'], $top);
+        }
     }
 
     public function test_a_recorded_instapay_receipt_is_read_and_matched(): void
@@ -794,6 +844,75 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame($newest->uuid, $this->verifier()->latestFor('affiliate_payout', 123)?->uuid);
         $this->assertSame($newest->uuid, $this->verifier()->find($newest->uuid)?->uuid);
         $this->assertNull($this->verifier()->latestFor('affiliate_payout', 999));
+    }
+
+    public function test_an_alternative_destination_is_stored_and_decides(): void
+    {
+        // A bank account the payee also reaches by phone on InstaPay: the receipt shows only the phone.
+        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE));
+
+        $result = $this->verifier()->submit(new VerificationRequest(
+            subjectType: 'affiliate_payout',
+            subjectId: 1,
+            expectedAmountMinor: 307000,
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::BANK, 'EG38 0019 0005 0000 0000 0000 0010'),
+            file: UploadedFile::fake()->image('receipt.png', 898, 1600),
+            idempotencyKey: 'affiliate_payout:1',
+            alternativeDestinations: [new ExpectedDestination(DestinationTypeEnum::PHONE, self::PHONE)],
+        ));
+
+        $this->assertSame(VerdictEnum::MATCH, $result->verdict);
+        $this->assertSame(
+            [['type' => 'phone', 'value' => self::PHONE]],
+            TransactionVerification::where('uuid', $result->uuid)->first()->expected_destination['alternatives'],
+        );
+    }
+
+    public function test_a_row_from_before_alternatives_is_still_decided_again(): void
+    {
+        $original = $this->readingRow(subjectId: 1);
+        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
+        $copy = $this->verifier()->submit($this->request(subjectId: 2));
+        // Stored by 0.4: no alternatives key.
+        TransactionVerification::where('uuid', $copy->uuid)->first()->update(['expected_destination' => ['type' => 'phone', 'value' => self::PHONE]]);
+        $original->update(['reference_hash' => TransactionVerification::where('uuid', $copy->uuid)->value('reference_hash')]);
+
+        $this->travel(16)->minutes();
+        app(TransactionVerificationService::class)->failStale();
+
+        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy->uuid)->verdict);
+    }
+
+    public function test_an_alexbank_confirmation_is_checked_and_its_format_kept(): void
+    {
+        $this->reading("ALEXBANK\nPAY SOMEONE\nCUSTOMER NAME ACCOUNT\n900000000001 SENDER CO\nBENEFICIARY NAME MOBILE WALLET NUMBER\n"
+            ."PAYEE 0020".substr(self::PHONE, 1)."\nPAYMENT TYPE PURPOSE OF TRANSFER\nMobile wallet CASH TRANSFER\nAMOUNT FEE\n3,070.00 EGP 100.00 EGP\nEXECUTION DATE");
+
+        $result = $this->verifier()->submit($this->request());
+
+        $this->assertSame(VerdictEnum::MATCH, $result->verdict);
+        $this->assertSame('alexbank', TransactionVerification::where('uuid', $result->uuid)->first()->extracted['format']);
+    }
+
+    public function test_a_receipt_no_parser_knows_is_unreadable_and_counted(): void
+    {
+        // The expected amount and phone are in the text, but no parser knows this layout: a person looks.
+        $this->reading("Some Bank\nTotal 3,070.00 EGP\n".self::PHONE);
+
+        $result = $this->verifier()->submit($this->request());
+
+        $this->assertSame(VerdictEnum::UNREADABLE, $result->verdict);
+        $this->assertSame('unrecognised', TransactionVerification::where('uuid', $result->uuid)->first()->extracted['format']);
+    }
+
+    public function test_a_receipt_ocr_read_nothing_from_is_unrecognised(): void
+    {
+        $this->reading('');
+
+        $result = $this->verifier()->submit($this->request());
+
+        $this->assertSame(VerdictEnum::UNREADABLE, $result->verdict);
+        $this->assertSame('unrecognised', TransactionVerification::where('uuid', $result->uuid)->first()->extracted['format']);
     }
 
     private function stuckRow(): TransactionVerification
