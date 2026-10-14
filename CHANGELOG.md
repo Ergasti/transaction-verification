@@ -19,7 +19,9 @@
   is unaffected. A `parsers` entry that doesn't implement `RecognisesReceipts` is a configuration error (an
   exception), not skipped. One narrow change: an InstaPay screenshot where every pass lost both the amount label and
   the `@instapay` address is now `unrecognised`, so its reference isn't read and a reused one shows as `unreadable`
-  rather than `duplicate` (an identical file is still caught by its hash; both go to a person).
+  rather than `duplicate` (an identical file is still caught by its hash; both go to a person). The second engine's
+  text is read as the format the first engine recognised, even when it lost those words. Text OCR read nothing from
+  is `unrecognised` too.
 - Each reading records its `format` (`instapay`, `alexbank`, `unrecognised`); results show it, and the shadow report
   has a `format` column.
 - `shadow-report --subject-type=` lists another caller's checks (default `affiliate_payout`).

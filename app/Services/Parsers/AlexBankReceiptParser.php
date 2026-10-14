@@ -40,6 +40,9 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
     // A line of values right under the labels: numbers and currency codes only ("13,876.00 EGP 100.00 EGP").
     private const VALUE_LINE = '/^(?:\S*\d\S*|[A-Z]{2,4})(?:\s+(?:\S*\d\S*|[A-Z]{2,4}))*$/';
 
+    // The labels under the values ("EXECUTION DATE DESCRIPTION"): upper case, whatever they say or a misread letter.
+    private const NEXT_LABELS = '/^[A-Z]{3,}/';
+
     // A wallet number. Tesseract often drops a zero of 0020 ("020…"), so that counts too.
     private const WALLET = '/(?<![\d+])(?:\+20|0020|020|0)1\d{9}(?!\d)/';
 
@@ -143,8 +146,8 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
 
     /**
      * One entry per AMOUNT | FEE row: the value under AMOUNT, or false unless the row reads whole. The values must sit
-     * on the lines right under the labels, one per label, so nothing from further down the page can stand in for a
-     * lost one. The amount must be money ("10,384.00") and more than the fee beside it: a fee never passes for it.
+     * on the lines right under the labels, one per label, with the next labels right after them, so nothing from further down
+     * the page can stand in for a lost one. The amount must be money ("10,384.00") and more than the fee beside it: a fee never passes for it.
      *
      * @param  list<string>  $lines
      * @return list<int|false>
@@ -174,9 +177,13 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
                 // of it ("384.00") is not the amount.
                 $garbled = $garbled || preg_match_all('/\S*\d\S*/', $lines[$k]) !== count($m[0]);
             }
+            // The values end at the next label row. Anything else after them (a number, a date, a description, the end
+            // of the pass) means a value line was lost and something from further down ("50.00" of a description)
+            // filled the row.
+            $anchored = $k < $count && preg_match(self::NEXT_LABELS, $lines[$k]) && ! preg_match(self::VALUE_LINE, $lines[$k]);
             $k--;
 
-            $amounts[] = $garbled ? false : $this->amount($labels, $numbers);
+            $amounts[] = $garbled || ! $anchored ? false : $this->amount($labels, $numbers);
         }
 
         return $amounts;

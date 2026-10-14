@@ -15,6 +15,33 @@ class ReceiptRouter implements ReceiptParser
 {
     public function parse(string $text): ExtractedFields
     {
+        foreach ($this->parsers() as $parser) {
+            if ($parser->recognises($text)) {
+                return $this->read($parser, $text);
+            }
+        }
+
+        return new ExtractedFields(format: ReceiptFormatEnum::UNRECOGNISED);
+    }
+
+    /**
+     * Reads the text with the parser for a format already known, recognised or not: the second engine's reading of a
+     * receipt the first engine recognised may have lost the very labels that tell it.
+     */
+    public function parseAs(string $text, ReceiptFormatEnum $format): ExtractedFields
+    {
+        foreach ($this->parsers() as $parser) {
+            if ($parser->format() === $format) {
+                return $this->read($parser, $text);
+            }
+        }
+
+        return new ExtractedFields(format: ReceiptFormatEnum::UNRECOGNISED);
+    }
+
+    /** @return iterable<ReceiptParser&RecognisesReceipts> */
+    private function parsers(): iterable
+    {
         foreach (config('transaction-verification.parsers') as $class) {
             $parser = app($class);
 
@@ -23,11 +50,12 @@ class ReceiptRouter implements ReceiptParser
                 throw new \InvalidArgumentException("{$class} in transaction-verification.parsers must implement RecognisesReceipts.");
             }
 
-            if ($parser->recognises($text)) {
-                return ExtractedFields::fromArray(['format' => $parser->format()->value] + $parser->parse($text)->toArray());
-            }
+            yield $parser;
         }
+    }
 
-        return new ExtractedFields(format: ReceiptFormatEnum::UNRECOGNISED);
+    private function read(ReceiptParser&RecognisesReceipts $parser, string $text): ExtractedFields
+    {
+        return ExtractedFields::fromArray(['format' => $parser->format()->value] + $parser->parse($text)->toArray());
     }
 }

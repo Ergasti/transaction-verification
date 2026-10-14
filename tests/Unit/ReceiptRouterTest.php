@@ -46,6 +46,32 @@ class ReceiptRouterTest extends TestCase
         }
     }
 
+    public function test_an_alexbank_description_that_reads_like_instapay_stays_alexbank(): void
+    {
+        // The sender types the description: "Transfer Amount" or an InstaPay address there is not an InstaPay receipt.
+        $tesseract = AlexBankReceiptParserTest::confirmation('3,070.00', '00201000000001');
+        $rapid = "ALEXBANK\nPAY SOMEONE\nCUSTOMER NAME\nACCOUNT\n900000000001\nMOBILE WALLET NUMBER\n00201000000001\n"
+            ."PAYMENT TYPE\nPURPOSE OF TRANSFER\nMobile wallet\nCASH TRANSFER\nAMOUNT\nFEE\n3,070.00 EGP\n100.00 EGP\nEXECUTION DATE\n"
+            ."DESCRIPTION\nMarketing Fees\n17/02/2025";
+
+        foreach ([$tesseract, $rapid] as $text) {
+            foreach (['Transfer Amount', 'payee@instapay'] as $description) {
+                $fields = (new ReceiptRouter)->parse(str_replace('Marketing Fees', $description, $text));
+
+                $this->assertSame([ReceiptFormatEnum::ALEXBANK, 307000, null], [$fields->format, $fields->amountMinor, $fields->reference], $description);
+            }
+        }
+    }
+
+    public function test_a_known_format_is_read_by_its_parser_even_unrecognised(): void
+    {
+        // A second reading that lost "Transfer Amount": read as the InstaPay receipt the first reading recognised.
+        $fields = (new ReceiptRouter)->parseAs("To Instapay\n01000000001", ReceiptFormatEnum::INSTAPAY);
+
+        $this->assertSame([ReceiptFormatEnum::INSTAPAY, '01000000001'], [$fields->format, $fields->phone]);
+        $this->assertEquals(new ExtractedFields(format: ReceiptFormatEnum::UNRECOGNISED), (new ReceiptRouter)->parseAs('To Instapay', ReceiptFormatEnum::UNRECOGNISED));
+    }
+
     public function test_instapay_is_asked_first(): void
     {
         // A transfer sent from an AlexBank account can show the sender's bank by name.

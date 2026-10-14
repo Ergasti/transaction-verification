@@ -41,6 +41,10 @@ class InstaPayReceiptParser implements ReceiptParser, RecognisesReceipts
     // case and with or without a colon, or the footer.
     private const SECTION_END = '/^(Reference|Date|Note|More\s+Details)\b|المرجع|التاريخ|ملاحظة|POWERED\s+BY|(?<![\p{L}\p{N}])(From|من)(?![\p{L}\p{N}])/iu';
 
+    // A bank's own transfer confirmation (AlexBank's upper-case labels): InstaPay prints title case, and names a bank
+    // only as the sender's ("ALEXBANK").
+    private const BANK_ORDER = '/^(?:PAY\s+SOMEONE|BENEFICIARY\s+NAME)\b|\bWALLET\s+NUMBER\b/m';
+
     private const NOTE = '/^Note\b|ملاحظة/iu';
 
     public function __construct(
@@ -50,11 +54,13 @@ class InstaPayReceiptParser implements ReceiptParser, RecognisesReceipts
 
     /**
      * Its amount label, or an InstaPay address: either alone is enough. The label on one line only: AlexBank's
-     * "CASH TRANSFER" sits right above its "AMOUNT" label.
+     * "CASH TRANSFER" sits right above its "AMOUNT" label. Never a bank's own confirmation, whose description can
+     * say either.
      */
     public function recognises(string $text): bool
     {
-        return preg_match('/Transfer\h+Amount|المحول/iu', $text) === 1 || preg_match(self::HANDLE, $text) === 1;
+        return (preg_match('/Transfer\h+Amount|المحول/iu', $text) === 1 || preg_match(self::HANDLE, $text) === 1)
+            && preg_match(self::BANK_ORDER, $text) !== 1;
     }
 
     public function format(): ReceiptFormatEnum

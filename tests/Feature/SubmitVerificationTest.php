@@ -178,6 +178,15 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame(VerdictEnum::NEEDS_REVIEW, $this->verifier()->submit($this->request(key: 'disagreed'))->verdict);
     }
 
+    public function test_fallback_reads_the_second_engine_as_the_layout_tesseract_recognised(): void
+    {
+        // Tesseract recognised InstaPay but lost the phone; RapidOCR kept the phone but lost the words that tell InstaPay.
+        $this->reading(implode("\f", array_fill(0, 4, "3,070 EGP\nTransfer Amount\nTo Instapay")));
+        $this->secondReading('fallback', "3,070 EGP\nTo Instapay\n".self::PHONE);
+
+        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->submit($this->request())->verdict);
+    }
+
     public function test_a_matching_receipt_is_stored_and_verified(): void
     {
         Event::fake([TransactionVerificationCompleted::class]);
@@ -848,6 +857,16 @@ class SubmitVerificationTest extends TestCase
     {
         // The expected amount and phone are in the text, but no parser knows this layout: a person looks.
         $this->reading("Some Bank\nTotal 3,070.00 EGP\n".self::PHONE);
+
+        $result = $this->verifier()->submit($this->request());
+
+        $this->assertSame(VerdictEnum::UNREADABLE, $result->verdict);
+        $this->assertSame('unrecognised', TransactionVerification::where('uuid', $result->uuid)->first()->extracted['format']);
+    }
+
+    public function test_a_receipt_ocr_read_nothing_from_is_unrecognised(): void
+    {
+        $this->reading('');
 
         $result = $this->verifier()->submit($this->request());
 

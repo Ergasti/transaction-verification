@@ -106,7 +106,7 @@ A router reads each receipt with the first parser that recognises it, and record
 
 | `format` | Receipt | Notes |
 |---|---|---|
-| `instapay` | InstaPay app, English or Arabic, old and new layout | Recognised by its "Transfer Amount" (المحول) label or an `@instapay` address |
+| `instapay` | InstaPay app, English or Arabic, old and new layout | Recognised by its "Transfer Amount" (المحول) label or an `@instapay` address, unless the text has AlexBank's labels (a sender can type either into AlexBank's description) |
 | `alexbank` | AlexBank "Pay someone" confirmation (A4 export) | Recognised by "ALEXBANK", "PAY SOMEONE", "BENEFICIARY NAME" or "MOBILE WALLET NUMBER". Several confirmations stacked in one image (a split payout) are added up, and each must name the same wallet. It has no reference number |
 | `unrecognised` | Anything else | Nothing is read, so it comes back `unreadable` and a person looks |
 

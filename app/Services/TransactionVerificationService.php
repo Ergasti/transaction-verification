@@ -18,6 +18,7 @@ use Modules\TransactionVerification\Data\VerificationRequest;
 use Modules\TransactionVerification\Data\VerificationResult;
 use Modules\TransactionVerification\Enums\CheckEnum;
 use Modules\TransactionVerification\Enums\DestinationTypeEnum;
+use Modules\TransactionVerification\Enums\ReceiptFormatEnum;
 use Modules\TransactionVerification\Enums\SecondEngineModeEnum;
 use Modules\TransactionVerification\Enums\VerdictEnum;
 use Modules\TransactionVerification\Enums\VerificationStatusEnum;
@@ -25,6 +26,7 @@ use Modules\TransactionVerification\Events\TransactionVerificationCompleted;
 use Modules\TransactionVerification\Models\TransactionVerification;
 use Modules\TransactionVerification\Services\Ocr\RapidOcrEngine;
 use Modules\TransactionVerification\Services\Ocr\TesseractEngine;
+use Modules\TransactionVerification\Services\Parsers\ReceiptRouter;
 use RuntimeException;
 use Throwable;
 
@@ -248,6 +250,12 @@ class TransactionVerificationService implements TransactionVerifier
 
         [$text, $second, $ms] = $early ?? $this->askSecond($path, $row->id);
 
+        // The second engine's text read as the layout the first one recognised, when it lost the labels that tell it.
+        if ($second->format === ReceiptFormatEnum::UNRECOGNISED && $text !== '' && $this->parser instanceof ReceiptRouter
+            && $fields->format !== null && $fields->format !== ReceiptFormatEnum::UNRECOGNISED) {
+            $second = $this->parser->parseAs($text, $fields->format);
+        }
+
         return [$mode === SecondEngineModeEnum::FALLBACK ? $fields->filledFrom($second, $threshold) : $fields->confirmedBy($second), $text, $ms];
     }
 
@@ -260,7 +268,7 @@ class TransactionVerificationService implements TransactionVerifier
      */
     private function firstRead(string $path, TransactionVerification $row): array
     {
-        $parse = fn (string $text) => $text === '' ? new ExtractedFields : $this->parser->parse($text);
+        $parse = fn (string $text) => $text === '' ? new ExtractedFields(format: ReceiptFormatEnum::UNRECOGNISED) : $this->parser->parse($text);
 
         if (! $this->engine instanceof TesseractEngine) {
             $text = $this->engine->read($path);
@@ -322,7 +330,7 @@ class TransactionVerificationService implements TransactionVerifier
 
         try {
             $text = $this->secondEngine->read($path);
-            $second = $text === '' ? new ExtractedFields : $this->parser->parse($text);
+            $second = $text === '' ? new ExtractedFields(format: ReceiptFormatEnum::UNRECOGNISED) : $this->parser->parse($text);
         } catch (Throwable $e) {
             $this->quietly(fn () => Log::warning('transaction-verification.second-engine-failed', ['id' => $id, 'exception' => $e::class]));
             [$text, $second] = ['', new ExtractedFields];

@@ -197,6 +197,19 @@ class AlexBankReceiptParserTest extends TestCase
         $this->assertNull($this->parse($text)->amountMinor);
     }
 
+    public function test_a_fee_followed_by_smaller_money_is_never_the_amount(): void
+    {
+        // The amount line and what follows it lost, a money-shaped description under the fee: it pairs with the fee.
+        foreach ([
+            "AMOUNT\nFEE\n100.00 EGP\n50.00 EGP",
+            "AMOUNT FEE\n100.00 EGP\n50.00",
+            "AMOUNT\nFEE\n100.00 EGP\n50.00 EGP\nMarketing Fees",
+            "AMOUNT\nFEE\n100.00 EGP\n50.00 EGP\n17/02/2025",
+        ] as $rows) {
+            $this->assertNull($this->parse("PAY SOMEONE\nMOBILE WALLET NUMBER\n00201000000001\n{$rows}")->amountMinor, $rows);
+        }
+    }
+
     public function test_a_misread_fee_still_lets_the_amount_through(): void
     {
         // A real pass read the fee "100.00" as "100,00": the amount next to it is still right.
