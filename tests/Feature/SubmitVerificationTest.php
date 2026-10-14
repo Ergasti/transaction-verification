@@ -27,6 +27,7 @@ use Modules\TransactionVerification\Models\TransactionVerification;
 use Modules\TransactionVerification\Services\TransactionVerificationService;
 use RuntimeException;
 use Modules\TransactionVerification\Tests\TestCase;
+use Modules\TransactionVerification\Tests\Unit\AlexBankReceiptParserTest;
 use Throwable;
 
 /** Submit → check in the same call → verdict → event. Generated images only: the real receipts are not in git. */
@@ -183,6 +184,16 @@ class SubmitVerificationTest extends TestCase
         // Tesseract recognised InstaPay but lost the phone; RapidOCR kept the phone but lost the words that tell InstaPay.
         $this->reading(implode("\f", array_fill(0, 4, "3,070 EGP\nTransfer Amount\nTo Instapay")));
         $this->secondReading('fallback', "3,070 EGP\nTo Instapay\n".self::PHONE);
+
+        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->submit($this->request())->verdict);
+    }
+
+    public function test_fallback_never_fills_from_another_layouts_reading(): void
+    {
+        // Tesseract read an AlexBank confirmation but not its amount. RapidOCR lost AlexBank's labels, and the description
+        // says "Transfer Amount", so on its own it reads as InstaPay: 9,999 off the description, not the 3,070 paid.
+        $this->reading(implode("\f", array_fill(0, 4, AlexBankReceiptParserTest::confirmation('IO 384.00', '00201000000001'))));
+        $this->secondReading('fallback', "AMOUNT\nFEE\n3,070.00 EGP\n100.00 EGP\nEXECUTION DATE\nDESCRIPTION\n9,999 EGP\nTransfer Amount");
 
         $this->assertSame(VerdictEnum::MATCH, $this->verifier()->submit($this->request())->verdict);
     }

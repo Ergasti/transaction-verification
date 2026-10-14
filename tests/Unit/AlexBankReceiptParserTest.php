@@ -161,6 +161,10 @@ class AlexBankReceiptParserTest extends TestCase
             'a garbled group split off' => ['1O, 384.00'],
             'a garbled group split off, no comma' => ['1O 384.00'],
             'a leading 1 read as I, split off' => ['I0, 384.00'],
+            // A leading group misread as letters only and split off: never the rest of it.
+            'the first group read as letters' => ['IO 384.00'],
+            'the first group read as other letters' => ['IB 876.00'],
+            'a leading 1 read as I, split off before a comma' => ['II 3,876.00'],
             'no piastres' => ['10,384'],
             'a misread separator' => ['10,384,00'],
         ];
@@ -172,6 +176,13 @@ class AlexBankReceiptParserTest extends TestCase
         $fields = $this->parse(self::confirmation('50,000.00', '00201000000001').self::confirmation($garbled, '00201000000001'));
 
         $this->assertNull($fields->amountMinor);
+    }
+
+    public function test_a_first_group_read_as_letters_reads_no_amount_on_rapidocr_either(): void
+    {
+        $text = "PAY SOMEONE\nMOBILE WALLET NUMBER\n00201000000001\nAMOUNT\nFEE\nIO 384.00 EGP\n100.00 EGP\nEXECUTION DATE";
+
+        $this->assertNull($this->parse($text)->amountMinor);
     }
 
     public function test_an_amount_row_missing_its_fee_reads_no_amount(): void

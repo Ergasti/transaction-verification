@@ -37,8 +37,9 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
 
     private const LABEL = '/A[A-Z]OUNT|FEE/';
 
-    // A line of values right under the labels: numbers and currency codes only ("13,876.00 EGP 100.00 EGP").
-    private const VALUE_LINE = '/^(?:\S*\d\S*|[A-Z]{2,4})(?:\s+(?:\S*\d\S*|[A-Z]{2,4}))*$/';
+    // A line of values right under the labels: numbers and the currency only ("13,876.00 EGP 100.00 EGP"). Any other
+    // word there is a misread digit group ("IO 384.00" of "10,384.00"): the row is unread, never read from what is left.
+    private const VALUE_LINE = '/^(?:\S*\d\S*|EGP)(?:\s+(?:\S*\d\S*|EGP))*$/';
 
     // The labels under the values ("EXECUTION DATE DESCRIPTION"): upper case, whatever they say or a misread letter.
     private const NEXT_LABELS = '/^[A-Z]{3,}/';

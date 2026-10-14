@@ -21,7 +21,8 @@
   the `@instapay` address is now `unrecognised`, so its reference isn't read and a reused one shows as `unreadable`
   rather than `duplicate` (an identical file is still caught by its hash; both go to a person). The second engine's
   text is read as the format the first engine recognised, even when it lost those words. Text OCR read nothing from
-  is `unrecognised` too.
+  is `unrecognised` too. An InstaPay screenshot whose note holds AlexBank's upper-case labels ("WALLET NUMBER", or a
+  line starting "PAY SOMEONE" or "BENEFICIARY NAME") is not taken for InstaPay either, so it comes back `unreadable`.
 - Each reading records its `format` (`instapay`, `alexbank`, `unrecognised`); results show it, and the shadow report
   has a `format` column.
 - `shadow-report --subject-type=` lists another caller's checks (default `affiliate_payout`).
