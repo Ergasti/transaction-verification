@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1
+
+- The RapidOCR sidecar reads a big tall image (taller than its 1600 px cap and than 1.5 widths: receipts stacked, a
+  long screenshot) in page-shaped slices, each cut at the emptiest row near a page's length, and joins their lines in
+  order. Before, the whole image was shrunk to fit 1600 px, so two stacked AlexBank confirmations (2479 x 7016) were
+  read 565 px wide and their wallet number came out wrong, sending the receipt to review. Now each slice is read like a
+  single page (measured: 2 slices, 3.7 s, wallet right; reading it whole at full size took 10.8 s and 4 GB). Images up
+  to a page (A4 is 1.41 widths) and phone screenshots within the cap are read whole, exactly as before. The PHP side
+  is unchanged; deploy the `0.5.1` sidecar image.
+
 ## 0.5.0
 
 - `VerificationRequest` takes optional `alternativeDestinations`: other places the money may rightly have gone. The
