@@ -313,8 +313,14 @@ class TransactionVerificationService implements TransactionVerifier
         $expected = $this->expectedDestinations($row);
         $threshold = (float) config('transaction-verification.confidence_threshold');
 
-        // The reference too: it finds a receipt reused for another payout, so fewer passes must not lose it.
-        foreach ([...$this->matcher->decidingKeys($expected, $fields), 'reference'] as $key) {
+        // The reference too, where the layout prints one: it finds a receipt reused for another payout, so fewer
+        // passes must not lose it. A layout without one (AlexBank) would otherwise always read every pass for nothing.
+        $keys = $this->matcher->decidingKeys($expected, $fields);
+        if ($fields->format?->printsReference() ?? true) {
+            $keys[] = 'reference';
+        }
+
+        foreach ($keys as $key) {
             $field = $key === 'amount' ? 'amountMinor' : $key;
 
             if ($fields->$field === null || ($fields->confidence[$key] ?? 1.0) < $threshold || $fields->$field !== $early[1]->$field) {

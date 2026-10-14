@@ -9,6 +9,9 @@
   single page (measured: 2 slices, 3.7 s, wallet right; reading it whole at full size took 10.8 s and 4 GB). Images up
   to a page (A4 is 1.41 widths) and phone screenshots within the cap are read whole, exactly as before. The PHP side
   is unchanged; deploy the `0.5.1` sidecar image.
+- On `second_engine` `always`, an AlexBank confirmation can stop after the first Tesseract passes when they and
+  RapidOCR agree on the amount and the wallet. Waiting for a reference, which that layout never prints, made every
+  AlexBank receipt read all four passes (about twice as long). InstaPay still needs its reference to stop early.
 
 ## 0.5.0
 

@@ -274,6 +274,18 @@ class ResultAndReportTest extends TestCase
         $this->assertCount(2, $tesseract->reads);
     }
 
+    public function test_a_layout_without_a_reference_needs_only_two_agreeing_passes(): void
+    {
+        // AlexBank prints no reference, so waiting for one would read every pass for nothing.
+        $receipt = "ALEXBANK\nOBJECT\nPAY SOMEONE\nBENEFICIARY NAME\nMOBILE WALLET NUMBER\n00201000000001\nAMOUNT\nFEE\n3,070.00 EGP\n100.00 EGP\nEXECUTION DATE\n17/02/2025";
+        $tesseract = $this->tesseractReading($receipt);
+        config(['transaction-verification.second_engine' => ['mode' => 'always', 'url' => 'http://ocr.test', 'timeout' => 5]]);
+        Http::fake(['ocr.test/read' => Http::response(['lines' => explode("\n", $receipt), 'version' => 'rapidocr test'])]);
+
+        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->submit($this->request())->verdict);
+        $this->assertSame([array_slice(config('transaction-verification.tesseract.passes'), 0, 2)], $tesseract->reads);
+    }
+
     public function test_early_passes_zero_reads_every_pass_at_once(): void
     {
         $tesseract = $this->tesseractReading(self::RECEIPT);
