@@ -55,7 +55,7 @@ disk until the request ends.
 
 ```yaml
 ocr_rapid:
-  image: ghcr.io/ergasti/transaction-verification-ocr:0.5.0   # the same version as the package
+  image: ghcr.io/ergasti/transaction-verification-ocr:0.5.1   # the same version as the package
   restart: always
   mem_limit: 2g
   cpus: 4
