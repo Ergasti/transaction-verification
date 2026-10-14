@@ -83,5 +83,7 @@ class ExtractedFieldsTest extends TestCase
         $this->assertSame(ReceiptFormatEnum::ALEXBANK, (new ExtractedFields(format: ReceiptFormatEnum::UNRECOGNISED))->filledFrom($theirs, 0.9)->format);
         $this->assertSame(ReceiptFormatEnum::ALEXBANK, (new ExtractedFields(statusText: 'EXECUTED', format: ReceiptFormatEnum::INSTAPAY))->filledFrom($theirs, 0.9)->format);
         $this->assertSame(ReceiptFormatEnum::INSTAPAY, (new ExtractedFields(phone: '01000000001', format: ReceiptFormatEnum::INSTAPAY))->filledFrom($theirs, 0.9)->format);
+        // A second engine that read nothing never relabels what a custom parser (no format) read.
+        $this->assertNull((new ExtractedFields(phone: '01000000001'))->filledFrom(new ExtractedFields(format: ReceiptFormatEnum::UNRECOGNISED), 0.9)->format);
     }
 }

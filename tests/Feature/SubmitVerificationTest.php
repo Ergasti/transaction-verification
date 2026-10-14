@@ -245,6 +245,23 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame([$first->uuid], $second->duplicateOf);
     }
 
+    public function test_a_clean_copy_of_a_receipt_read_without_its_instapay_words_is_a_duplicate(): void
+    {
+        // The original lost "Transfer Amount" on every pass, so nothing recognised it (or AlexBank did, by the sender's
+        // bank, and read nothing): its reference still counts.
+        foreach (['Transaction Successful', "From\nALEXBANK"] as $subject => $top) {
+            $this->reading("{$top}\n3,070 EGP\nTo Mobile Wallet\n".self::PHONE."\nReference 10000000000{$subject}");
+            $first = $this->verifier()->submit($this->request(subjectId: 10 + $subject, width: 800 + $subject));
+
+            $this->reading(str_replace('100000000001', "10000000000{$subject}", self::RECEIPT));
+            $second = $this->verifier()->submit($this->request(subjectId: 20 + $subject, width: 900 + $subject));
+
+            $this->assertSame([VerdictEnum::UNREADABLE, VerdictEnum::DUPLICATE], [$first->verdict, $second->verdict], $top);
+            $this->assertSame([$first->uuid], $second->duplicateOf, $top);
+            $this->assertSame('unrecognised', TransactionVerification::where('uuid', $first->uuid)->first()->extracted['format'], $top);
+        }
+    }
+
     public function test_a_recorded_instapay_receipt_is_read_and_matched(): void
     {
         $this->reading(self::RECEIPT);

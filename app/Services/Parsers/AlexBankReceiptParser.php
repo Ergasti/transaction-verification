@@ -59,7 +59,8 @@ class AlexBankReceiptParser implements ReceiptParser, RecognisesReceipts
     private const NUMBER = '/(?<!\S)\d[\d.,]*(?!\S)/';
 
     // The amount is printed with its piastres ("10,384.00") and never starts with a zero: "0,384.00" is a 10,384.00 that
-    // lost its 1, not 384. Anything else is unread, never read as a smaller amount.
+    // lost its 1, not 384. Anything else is unread. A first digit lost outright before another ("3,876.00" of
+    // 13,876.00) still looks like money: only the other passes and the second engine can disagree with it.
     private const MONEY = '/^(?:[1-9]\d{0,2}(?:,\d{3})+|[1-9]\d*)\.\d{2}$/';
 
     // The fee next to it only has to look like money, misread separator and all ("100,00"): with its amount line lost,

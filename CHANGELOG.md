@@ -18,9 +18,10 @@
   that recognises it. Text none recognises reads nothing and comes back `unreadable`. An app that set its own `parser`
   is unaffected. A `parsers` entry that doesn't implement `RecognisesReceipts` is a configuration error (an
   exception), not skipped. InstaPay verdicts change only where the text no longer says InstaPay: a screenshot where
-  every pass lost both the amount label and the `@instapay` address reads nothing (`unrecognised`, or `alexbank` when
-  it names the sender's bank), so its reference isn't read and a reused one shows as `unreadable` rather than
-  `duplicate` (an identical file is still caught by its hash; both go to a person). The second engine's text is read
+  every pass lost both the amount label and the `@instapay` address reads nothing but its reference (`unrecognised`,
+  also when it names the sender's bank: a parser that reads nothing off the text doesn't claim it), so it comes back
+  `unreadable` and a person looks; a later clean copy is still a `duplicate`. An AlexBank confirmation that lost all its labels keeps the sender's 12-digit account as that
+  reference, so two such receipts from one account show as duplicates (a person looks at both). The second engine's text is read
   as the format the first engine recognised, even when it lost those words, unless the first engine read nothing off
   that format; then the second engine's own reading and format stand. Text OCR read nothing from is `unrecognised`
   too. An InstaPay screenshot whose note holds AlexBank's upper-case labels ("WALLET NUMBER", or a line starting

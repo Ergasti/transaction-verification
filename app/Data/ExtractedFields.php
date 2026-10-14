@@ -71,8 +71,9 @@ final readonly class ExtractedFields
 
         $ours['currency'] ??= $ours['amount_minor'] === null ? null : $theirs['currency'];
         // Read as the second engine read it when ours knew no layout, or read nothing off the one it took: the format
-        // says which parser the fields came from.
-        if (($empty || in_array($ours['format'], [null, ReceiptFormatEnum::UNRECOGNISED->value], true)) && $theirs['format'] !== null) {
+        // says which parser the fields came from. Never its "unrecognised": that would relabel what ours did read.
+        if (($empty || in_array($ours['format'], [null, ReceiptFormatEnum::UNRECOGNISED->value], true))
+            && ! in_array($theirs['format'], [null, ReceiptFormatEnum::UNRECOGNISED->value], true)) {
             $ours['format'] = $theirs['format'];
         }
 

@@ -108,7 +108,7 @@ A router reads each receipt with the first parser that recognises it, and record
 |---|---|---|
 | `instapay` | InstaPay app, English or Arabic, old and new layout | Recognised by its "Transfer Amount" (المحول) label or an `@instapay` address, unless the text has AlexBank's labels (a sender can type either into AlexBank's description) |
 | `alexbank` | AlexBank "Pay someone" confirmation (A4 export) | Recognised by "ALEXBANK", "PAY SOMEONE", "BENEFICIARY NAME" or "MOBILE WALLET NUMBER". Several confirmations stacked in one image (a split payout) are added up, and each must name the same wallet. It has no reference number |
-| `unrecognised` | Anything else | Nothing is read, so it comes back `unreadable` and a person looks |
+| `unrecognised` | Anything else | Nothing is read but a reference-shaped number (so a later copy is still a `duplicate`), so it comes back `unreadable` and a person looks |
 
 Any one signal is enough, so a renamed label doesn't lose a format. A layout that changes more falls to
 `unrecognised`, which the shadow report shows. A tall stack of confirmations reads less well on the second engine

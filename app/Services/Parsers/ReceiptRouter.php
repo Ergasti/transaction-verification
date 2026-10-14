@@ -9,15 +9,32 @@ use Modules\TransactionVerification\Enums\ReceiptFormatEnum;
 
 /**
  * The default parser: hands the text to the first configured parser that recognises it, and tags the format.
- * Text none recognises reads nothing (format unrecognised), so it comes back unreadable and a person looks.
+ * Text none recognises, or none reads anything off, reads nothing (format unrecognised) but its reference, so it comes back unreadable and a
+ * person looks.
  */
 class ReceiptRouter implements ReceiptParser
 {
     public function parse(string $text): ExtractedFields
     {
         foreach ($this->parsers() as $parser) {
-            if ($parser->recognises($text)) {
-                return $this->read($parser, $text);
+            // One that recognises the text but reads nothing off it was picked by a stray word ("ALEXBANK", a sender's
+            // bank on an InstaPay screenshot): the text counts as unrecognised.
+            if ($parser->recognises($text) && ! ($fields = $this->read($parser, $text))->readNothing()) {
+                return $fields;
+            }
+        }
+
+        // The reference still, as the first parser to find one reads it (InstaPay's goes by shape when its labels are
+        // lost): a later clean copy of this receipt, sent for another payout, is then caught as a duplicate.
+        foreach ($this->parsers() as $parser) {
+            $read = $parser->parse($text);
+
+            if ($read->reference !== null) {
+                return new ExtractedFields(
+                    reference: $read->reference,
+                    confidence: array_intersect_key($read->confidence, ['reference' => true]),
+                    format: ReceiptFormatEnum::UNRECOGNISED,
+                );
             }
         }
 
