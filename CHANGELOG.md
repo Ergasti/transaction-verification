@@ -17,12 +17,15 @@
 - The default `parser` is now `ReceiptRouter`. It hands the text to the first of `parsers` (InstaPay, then AlexBank)
   that recognises it. Text none recognises reads nothing and comes back `unreadable`. An app that set its own `parser`
   is unaffected. A `parsers` entry that doesn't implement `RecognisesReceipts` is a configuration error (an
-  exception), not skipped. One narrow change: an InstaPay screenshot where every pass lost both the amount label and
-  the `@instapay` address is now `unrecognised`, so its reference isn't read and a reused one shows as `unreadable`
-  rather than `duplicate` (an identical file is still caught by its hash; both go to a person). The second engine's
-  text is read as the format the first engine recognised, even when it lost those words. Text OCR read nothing from
-  is `unrecognised` too. An InstaPay screenshot whose note holds AlexBank's upper-case labels ("WALLET NUMBER", or a
-  line starting "PAY SOMEONE" or "BENEFICIARY NAME") is not taken for InstaPay either, so it comes back `unreadable`.
+  exception), not skipped. InstaPay verdicts change only where the text no longer says InstaPay: a screenshot where
+  every pass lost both the amount label and the `@instapay` address reads nothing (`unrecognised`, or `alexbank` when
+  it names the sender's bank), so its reference isn't read and a reused one shows as `unreadable` rather than
+  `duplicate` (an identical file is still caught by its hash; both go to a person). The second engine's text is read
+  as the format the first engine recognised, even when it lost those words, unless the first engine read nothing off
+  that format; then the second engine's own reading and format stand. Text OCR read nothing from is `unrecognised`
+  too. An InstaPay screenshot whose note holds AlexBank's upper-case labels ("WALLET NUMBER", or a line starting
+  "PAY SOMEONE" or "BENEFICIARY NAME") is not taken for InstaPay either, so it comes back `unreadable` (recorded as
+  `alexbank` when it also names the sender's bank).
 - Each reading records its `format` (`instapay`, `alexbank`, `unrecognised`); results show it, and the shadow report
   has a `format` column.
 - `shadow-report --subject-type=` lists another caller's checks (default `affiliate_payout`).

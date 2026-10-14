@@ -198,6 +198,19 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame(VerdictEnum::MATCH, $this->verifier()->submit($this->request())->verdict);
     }
 
+    public function test_fallback_reads_an_instapay_receipt_tesseract_took_for_alexbank_by_the_senders_bank(): void
+    {
+        // Tesseract lost InstaPay's words but kept the sender's bank, so AlexBank took it and read nothing: RapidOCR's
+        // InstaPay reading stands, under its own format.
+        $this->reading(implode("\f", array_fill(0, 4, "From\nALEXBANK\n3,070 EGP\nTo Mobile Wallet\n".self::PHONE)));
+        $this->secondReading('fallback', "3,070 EGP\nTransfer Amount\nTo Mobile Wallet\n".self::PHONE."\nReference 100000000001");
+
+        $result = $this->verifier()->submit($this->request());
+
+        $this->assertSame(VerdictEnum::MATCH, $result->verdict);
+        $this->assertSame('instapay', TransactionVerification::where('uuid', $result->uuid)->first()->extracted['format']);
+    }
+
     public function test_a_matching_receipt_is_stored_and_verified(): void
     {
         Event::fake([TransactionVerificationCompleted::class]);

@@ -127,6 +127,14 @@ class AlexBankReceiptParserTest extends TestCase
         $this->assertSame(307000, $fields->amountMinor);
     }
 
+    public function test_a_lost_wallet_line_is_never_filled_from_below_the_wallet_field(): void
+    {
+        // The wallet line lost: a phone-shaped number past PAYMENT TYPE is not the wallet.
+        $text = "PAY SOMEONE\nMOBILE WALLET NUMBER\nPAYEE NAME\nPAYMENT TYPE\n01099999999\nAMOUNT FEE\n3,070.00 EGP 100.00 EGP\nEXECUTION DATE";
+
+        $this->assertNull($this->parse($text)->phone);
+    }
+
     public function test_stacked_confirmations_to_two_wallets_read_no_wallet(): void
     {
         $fields = $this->parse(self::confirmation('50,000.00', '00201000000001').self::confirmation('10,384.00', '00201000000002'));
@@ -149,6 +157,10 @@ class AlexBankReceiptParserTest extends TestCase
             'a letter for a digit' => ['1O,384.00'],
             // A leading 1 read as I, l or |: the digits after it must not pass for 384.00.
             'a leading 1 read as I' => ['I0,384.00'],
+            // ...and when what follows it has no leading zero to give it away: never 3,876.00.
+            'a leading 1 read as I before a 3' => ['I3,876.00'],
+            'a leading 1 read as l before a 3' => ['l3,876.00'],
+            'a leading 1 read as a bar before a 3' => ['|3,876.00'],
             'a leading 1 read as l' => ['l0,384.00'],
             'a leading 1 read as a bar' => ['|0,384.00'],
             'a zero' => ['0.00'],
@@ -180,9 +192,11 @@ class AlexBankReceiptParserTest extends TestCase
 
     public function test_a_first_group_read_as_letters_reads_no_amount_on_rapidocr_either(): void
     {
-        $text = "PAY SOMEONE\nMOBILE WALLET NUMBER\n00201000000001\nAMOUNT\nFEE\nIO 384.00 EGP\n100.00 EGP\nEXECUTION DATE";
+        foreach (['IO 384.00', 'I3,876.00'] as $garbled) {
+            $text = "PAY SOMEONE\nMOBILE WALLET NUMBER\n00201000000001\nAMOUNT\nFEE\n{$garbled} EGP\n100.00 EGP\nEXECUTION DATE";
 
-        $this->assertNull($this->parse($text)->amountMinor);
+            $this->assertNull($this->parse($text)->amountMinor, $garbled);
+        }
     }
 
     public function test_an_amount_row_missing_its_fee_reads_no_amount(): void

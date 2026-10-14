@@ -251,9 +251,10 @@ class TransactionVerificationService implements TransactionVerifier
         [$text, $second, $ms] = $early ?? $this->askSecond($path, $row->id);
 
         // The second engine's text read as the layout the first one recognised, when it lost the labels that tell it
-        // or took another layout's: its fields are compared with, or fill, fields read off that layout.
+        // or took another layout's: its fields are compared with, or fill, fields read off that layout. Not when the
+        // first read nothing off its layout: a stray word ("ALEXBANK", the sender's bank) may have picked it.
         if ($second->format !== $fields->format && $text !== '' && $this->parser instanceof ReceiptRouter
-            && $fields->format !== null && $fields->format !== ReceiptFormatEnum::UNRECOGNISED) {
+            && $fields->format !== null && $fields->format !== ReceiptFormatEnum::UNRECOGNISED && ! $fields->readNothing()) {
             $second = $this->parser->parseAs($text, $fields->format);
         }
 

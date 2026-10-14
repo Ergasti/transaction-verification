@@ -42,6 +42,14 @@ final readonly class ExtractedFields
         return self::fromArray($ours);
     }
 
+    /** No scored field was read: whatever layout it was tagged with, nothing came of it. */
+    public function readNothing(): bool
+    {
+        $read = $this->toArray();
+
+        return array_filter(self::SCORED, fn (string $field) => $read[$field] !== null) === [];
+    }
+
     /**
      * Second engine on 'fallback': a scored field this reading missed is taken from it, and one read under
      * $threshold is confirmed when it reads the same. It then counts as certain. Anything else is left alone.
@@ -49,6 +57,7 @@ final readonly class ExtractedFields
     public function filledFrom(self $second, float $threshold): self
     {
         [$ours, $theirs] = [$this->toArray(), $second->toArray()];
+        $empty = $this->readNothing();
 
         foreach (self::SCORED as $key => $field) {
             // A field without a score counts as certain, as in the Matcher.
@@ -61,8 +70,9 @@ final readonly class ExtractedFields
         }
 
         $ours['currency'] ??= $ours['amount_minor'] === null ? null : $theirs['currency'];
-        // Read as the second engine read it when ours knew no layout: the format says which parser the fields came from.
-        if (in_array($ours['format'], [null, ReceiptFormatEnum::UNRECOGNISED->value], true) && $theirs['format'] !== null) {
+        // Read as the second engine read it when ours knew no layout, or read nothing off the one it took: the format
+        // says which parser the fields came from.
+        if (($empty || in_array($ours['format'], [null, ReceiptFormatEnum::UNRECOGNISED->value], true)) && $theirs['format'] !== null) {
             $ours['format'] = $theirs['format'];
         }
 

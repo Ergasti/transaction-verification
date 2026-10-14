@@ -18,7 +18,8 @@ class ImagePreprocessor
 
     // Checked before decoding: a truecolor pixel costs 4 bytes, so a cap bounds the decode whatever the worker's
     // memory_limit. A 1440x3200 phone screenshot is 4.6 M pixels; a bank's A4 export at 300 dpi is 8.7 M a page, and a
-    // split payout stacks its pages (3 are 26 M). Measured: a 17.4 M-pixel stack adds ~52 MB to the worker.
+    // split payout stacks its pages (3 are 26 M). Measured: a 17.4 M-pixel stack (palette PNG) adds ~52 MB to the worker.
+    // Worst case at the cap, a truecolor JPEG turned by its EXIF: ~120 MB decoded, ~120 MB more while rotating.
     private const MAX_SOURCE_PIXELS = 30_000_000;
 
     private const MAX_OUTPUT_PIXELS = 8_000_000;
