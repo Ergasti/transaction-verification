@@ -51,8 +51,18 @@ venv="$build/venv/bin"
 # build. hwloc and tbbbind only pin threads to NUMA nodes -- OpenVINO loads them if present and runs plainly
 # without them, and a laptop has one node anyway -- so the bundle is built without them.
 if [ "$os" = macos ]; then
-    rm -f "$build"/venv/lib/python*/site-packages/openvino/libs/libhwloc*.dylib \
-          "$build"/venv/lib/python*/site-packages/openvino/libs/libtbbbind*.dylib
+    libs="$(echo "$build"/venv/lib/python*/site-packages/openvino/libs)"
+    [ -d "$libs" ] || { echo "build-archive.sh: no openvino/libs under $build/venv." >&2; exit 1; }
+    rm -f "$libs"/libhwloc*.dylib "$libs"/libtbbbind*.dylib
+
+    # PyInstaller ad-hoc signs everything it bundles, and codesign answers "internal error in Code Signing
+    # subsystem" on OpenVINO's prebuilt dylibs: they arrive signed by Intel and carry extended attributes from
+    # the wheel. Clearing both leaves plain files for PyInstaller to sign itself. Unlike hwloc these cannot be
+    # deleted -- libtbb is OpenVINO's threading runtime.
+    xattr -cr "$libs"
+    for dylib in "$libs"/*.dylib; do
+        codesign --remove-signature "$dylib" 2>/dev/null || true
+    done
 fi
 
 # Before freezing, not after: RapidOCR fetches its models on first use, and they have to be inside the
