@@ -54,20 +54,13 @@ venv="$build/venv/bin"
 # install_name_tool refuses OpenVINO's ("link edit information does not fill the __LINKEDIT segment") -- not one
 # bad file but dozens, core libraries among them, so there is nothing to delete past. server.py therefore
 # defaults to ONNX Runtime on darwin, which reads the 9 real fixtures identically (~2x slower, measured).
-collect_openvino="--collect-all openvino"
-exclude_openvino=""
-if [ "$os" = macos ]; then
-    collect_openvino=""
-    exclude_openvino="--exclude-module openvino"
-fi
-
 # Before freezing, not after: RapidOCR fetches its models on first use, and they have to be inside the
 # archive or every server needs internet access the first time it reads a receipt.
 ( cd "$here" && "$venv/python" server.py --warm )
 
 "$venv/pyinstaller" --noconfirm --clean --onedir --name tv-ocr \
     --distpath "$build/dist" --workpath "$build/work" --specpath "$build/spec" \
-    --collect-all rapidocr --collect-all onnxruntime $collect_openvino $exclude_openvino \
+    --collect-all rapidocr --collect-all onnxruntime --collect-all openvino \
     --collect-all shapely --collect-all pyclipper \
     "$here/server.py"
 

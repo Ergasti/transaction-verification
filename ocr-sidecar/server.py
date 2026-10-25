@@ -35,7 +35,7 @@ MAX_SIDE = 1600
 # so it is the default -- except on macOS, where PyInstaller cannot bundle OpenVINO's dylibs (install_name_tool
 # refuses them: "link edit information does not fill the __LINKEDIT segment"), so a frozen Mac build has no
 # OpenVINO in it to load. OCR_ENGINE overrides either way.
-BACKEND = EngineType[os.environ.get("OCR_ENGINE", "ONNXRUNTIME" if sys.platform == "darwin" else "OPENVINO").upper()]
+BACKEND = EngineType[os.environ.get("OCR_ENGINE", "OPENVINO").upper()]
 ENGINE = RapidOCR(params={
     "Global.use_cls": False,
     "Global.log_level": "error",
