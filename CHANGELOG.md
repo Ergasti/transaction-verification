@@ -9,7 +9,12 @@
   `PATH`. Gone with it: the `ocr_rapid` compose service, the `read:packages` token, the per-server
   `docker login`, and keeping an image version equal to the package version. The archive is built for
   **Linux x86_64 on glibc 2.35 or newer** (Ubuntu 22.04 and up) -- the only platform it is built for; anywhere
-  else, including macOS, keeps using the Docker sidecar, which stays supported.
+  else, including macOS, runs `server.py`'s HTTP mode itself -- as plain Python or in a container of its own --
+  and points `TRANSACTION_VERIFICATION_RAPIDOCR_URL` at it. **No sidecar image is published from 0.6.0 on**;
+  `ghcr.io/ergasti/transaction-verification-ocr` stops at `0.5.1`.
+- The HTTP server now listens on **127.0.0.1** instead of every interface: it has no authentication, and
+  outside a container's private network a host-wide bind offers the engine to anything that can reach the box.
+  A container must set `OCR_BIND=0.0.0.0` to stay reachable from the app's container.
 - **Upgrading is not automatic.** Install the two system packages, then the engine:
   `sudo apt install tesseract-ocr tesseract-ocr-ara poppler-utils` (macOS:
   `brew install tesseract tesseract-lang poppler`), then

@@ -6,6 +6,7 @@ GET  /health                             ->  {"version": "..."}
 `python server.py <path>` instead reads that one image and prints the same body on stdout, exit 0; any failure
 prints {"error": ...} and exits non-zero. That is how the frozen binary is invoked -- one image, no server, no port.
 
+The server listens on 127.0.0.1 only (OCR_BIND to change it; a container wants 0.0.0.0): there is no auth.
 One read at a time (a lock), so memory stays at one model while queue workers wait their turn; /health is answered
 on its own thread even during a read, so a busy sidecar never looks wedged to the healthcheck. Receipt text is never
 logged. `python server.py --warm` builds the engine (downloading the models) and exits.
@@ -215,4 +216,6 @@ if __name__ == "__main__":
         print(json.dumps(answer, ensure_ascii=False))
         sys.exit(status)
     else:
-        ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+        # Localhost only: there is no authentication, so a host-wide bind would offer the engine to the network.
+        # A container needs 0.0.0.0 to be reachable from the app's container; set OCR_BIND there.
+        ThreadingHTTPServer((os.environ.get("OCR_BIND", "127.0.0.1"), 8080), Handler).serve_forever()

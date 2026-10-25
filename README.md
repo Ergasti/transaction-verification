@@ -65,7 +65,10 @@ On macOS: `brew install tesseract tesseract-lang poppler`.
 - `install-ocr` downloads the frozen RapidOCR engine for this platform from the package's GitHub Release, verifies its
   SHA256 **before** unpacking, puts it under `storage/app/transaction-verification/ocr`, and then runs it once to prove
   it starts. The only built platform is **`linux-x86_64`** (glibc 2.35 or newer, i.e. Ubuntu 22.04 and up).
-  On a Mac, or anywhere else, use the Docker sidecar instead -- it is still supported.
+  Anywhere else, including a Mac, run the engine's HTTP mode yourself and point
+  `TRANSACTION_VERIFICATION_RAPIDOCR_URL` at it: `pip install -r ocr-sidecar/requirements.txt` then
+  `python ocr-sidecar/server.py`, or your own container (`OCR_BIND=0.0.0.0` in one). No image is published
+  any more -- `ghcr.io/ergasti/transaction-verification-ocr` stops at `0.5.1`.
 - It finishes by reporting the two host binaries. A missing Tesseract fails the command; a missing Poppler only warns.
 - The engine release it fetches is **this package's own version**, so the two cannot drift. It records which
   release it installed and says so if a later run finds a different one.
