@@ -71,6 +71,11 @@ jobs:
           path: out
           merge-multiple: true
 
+      # `gh release upload` does not create, so a tag with no Release yet needs one made first.
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" out/*.tar.gz out/*.sha256 --clobber --repo "$GITHUB_REPOSITORY"
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+                 --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          gh release upload "$GITHUB_REF_NAME" out/*.tar.gz out/*.sha256 --clobber --repo "$GITHUB_REPOSITORY"
