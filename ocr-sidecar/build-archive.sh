@@ -54,6 +54,15 @@ venv="$build/venv/bin"
 # install_name_tool refuses OpenVINO's ("link edit information does not fill the __LINKEDIT segment") -- not one
 # bad file but dozens, core libraries among them, so there is nothing to delete past. server.py therefore
 # defaults to ONNX Runtime on darwin, which reads the 9 real fixtures identically (~2x slower, measured).
+#
+# Already tried, so that nobody pays for it twice:
+#   * deleting the offender -- the error only moves: libhwloc, then libtbb, then libopenvino_ir_frontend.
+#   * stripping the vendor signature and xattrs first -- no change; the gap is in how the wheel is linked.
+#   * a newer PyInstaller -- 6.22.3 is the newest there is.
+#   * older OpenVINO -- 2026.3.1 and 2025.4.1 fail identically, so it is not a regression to escape.
+# Untried, and deliberately so: LLVM's install-name-tool shimmed over Apple's, and collecting the dylibs as
+# --add-data to skip the rewrite. Both can produce a bundle that passes CI and fails on someone's machine,
+# which is worse than a platform that honestly runs a different runtime.
 collect_openvino="--collect-all openvino"
 exclude_openvino=""
 if [ "$os" = macos ]; then

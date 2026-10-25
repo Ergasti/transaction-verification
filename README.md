@@ -64,8 +64,13 @@ On macOS: `brew install tesseract tesseract-lang poppler`.
   that only ever sees screenshots does not need it.
 - `install-ocr` downloads the frozen RapidOCR engine for this platform from the package's GitHub Release, verifies its
   SHA256 **before** unpacking, puts it under `storage/app/transaction-verification/ocr`, and then runs it once to prove
-  it starts. The only built platform is **`linux-x86_64`** (glibc 2.35 or newer, i.e. Ubuntu 22.04 and up).
-  Anywhere else, including a Mac, run the engine's HTTP mode yourself and point
+  it starts. Built platforms: **`linux-x86_64`** (glibc 2.35 or newer, i.e. Ubuntu 22.04 and up) and
+  **`macos-arm64`** (Apple Silicon, for development).
+- The two differ in one way only. The Mac build runs its models on ONNX Runtime instead of OpenVINO, because
+  PyInstaller cannot bundle OpenVINO's macOS libraries. Both read the real fixtures **line for line
+  identically**; ONNX Runtime is about twice as slow, which costs a developer seconds and production nothing.
+  The stored engine version records which one read a receipt.
+- Anywhere else -- an Intel Mac, another Linux architecture -- run the engine's HTTP mode yourself and point
   `TRANSACTION_VERIFICATION_RAPIDOCR_URL` at it: `pip install -r ocr-sidecar/requirements.txt` then
   `python ocr-sidecar/server.py`, or your own container (`OCR_BIND=0.0.0.0` in one). No image is published
   any more -- `ghcr.io/ergasti/transaction-verification-ocr` stops at `0.5.1`.

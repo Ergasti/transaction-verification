@@ -22,9 +22,8 @@ jobs:
           # manylinux_2_28 would reach further back but cannot be used: its Python is built static, and
           # PyInstaller needs a shared libpython ("Python was built without a shared library").
           #
-          # macos-arm64 is a developer convenience, not production: nothing here is deployed to a Mac.
-          # build-archive.sh deletes OpenVINO's libhwloc and libtbbbind on macOS before freezing, because
-          # install_name_tool refuses to rewrite them; without that this row fails outright.
+          # macos-arm64 carries no OpenVINO: install_name_tool rejects its dylibs, so that build runs on ONNX
+          # Runtime instead (see build-archive.sh). Developer machines only -- nothing here deploys to a Mac.
           - platform: linux-x86_64
             runs-on: ubuntu-22.04
             python: python3

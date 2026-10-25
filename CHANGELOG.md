@@ -7,11 +7,17 @@
   platform, verifies its SHA256 before unpacking, and runs it once to prove it starts. The archive carries a
   frozen interpreter, so **the server needs no Python at all** -- checked by reading a receipt with an empty
   `PATH`. Gone with it: the `ocr_rapid` compose service, the `read:packages` token, the per-server
-  `docker login`, and keeping an image version equal to the package version. The archive is built for
-  **Linux x86_64 on glibc 2.35 or newer** (Ubuntu 22.04 and up) -- the only platform it is built for; anywhere
-  else, including macOS, runs `server.py`'s HTTP mode itself -- as plain Python or in a container of its own --
-  and points `TRANSACTION_VERIFICATION_RAPIDOCR_URL` at it. **No sidecar image is published from 0.6.0 on**;
+  `docker login`, and keeping an image version equal to the package version. Archives are built for
+  **Linux x86_64 on glibc 2.35 or newer** (Ubuntu 22.04 and up) and for **macOS on Apple Silicon**; anything
+  else runs `server.py`'s HTTP mode itself -- as plain Python or in a container of its own -- and points
+  `TRANSACTION_VERIFICATION_RAPIDOCR_URL` at it. **No sidecar image is published from 0.6.0 on**;
   `ghcr.io/ergasti/transaction-verification-ocr` stops at `0.5.1`.
+- **`OCR_ENGINE` chooses the inference runtime**, defaulting to OpenVINO -- or to ONNX Runtime on macOS, whose
+  build carries no OpenVINO because `install_name_tool` refuses its dylibs ("link edit information does not
+  fill the __LINKEDIT segment"), on every release tried from 2025.4.1 to 2026.4.1. Both runtimes execute the
+  same ONNX models and were measured reading all 9 real fixtures byte-identically, InstaPay and AlexBank,
+  including the stacked page that is read in slices; OpenVINO is about twice as fast on the large images. The
+  engine version string now names the runtime, and is unchanged on Linux.
 - The HTTP server now listens on **127.0.0.1** instead of every interface: it has no authentication, and
   outside a container's private network a host-wide bind offers the engine to anything that can reach the box.
   A container must set `OCR_BIND=0.0.0.0` to stay reachable from the app's container.
