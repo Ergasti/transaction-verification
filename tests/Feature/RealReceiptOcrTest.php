@@ -26,8 +26,10 @@ class RealReceiptOcrTest extends TestCase
         $this->needs('tesseract');
         $wrong = [];
 
-        foreach ($this->expected() as $id => $expected) {
-            array_push($wrong, ...$this->wrong($id, $expected, $this->read(self::FIXTURES."/{$id}.png")));
+        $expected = $this->expected();
+
+        foreach ($this->receipts() as $id => $path) {
+            array_push($wrong, ...$this->wrong($id, $expected[$id], $this->read($path)));
         }
 
         $this->assertSame([], $wrong, 'Fields read wrong: '.implode(', ', $wrong));
@@ -36,10 +38,11 @@ class RealReceiptOcrTest extends TestCase
     public function test_a_real_receipt_saved_as_pdf_is_read_exactly(): void
     {
         $this->needs('tesseract', 'pdftoppm');
-        $pdf = $this->pdfOf(self::FIXTURES.'/01.png');
+        [$id, $receipt] = $this->oneReceipt();
+        $pdf = $this->pdfOf($receipt);
 
         try {
-            $wrong = $this->wrong('01', $this->expected()['01'], $this->read($pdf));
+            $wrong = $this->wrong($id, $this->expected()[$id], $this->read($pdf));
         } finally {
             @unlink($pdf);
         }
@@ -55,10 +58,11 @@ class RealReceiptOcrTest extends TestCase
             $this->markTestSkipped('Needs ext-exif (the Docker image has it).');
         }
 
-        $photo = $this->sidewaysPhotoOf(self::FIXTURES.'/01.png');
+        [$id, $receipt] = $this->oneReceipt();
+        $photo = $this->sidewaysPhotoOf($receipt);
 
         try {
-            $wrong = $this->wrong('01', $this->expected()['01'], $this->read($photo));
+            $wrong = $this->wrong($id, $this->expected()[$id], $this->read($photo));
         } finally {
             @unlink($photo);
         }
@@ -78,10 +82,12 @@ class RealReceiptOcrTest extends TestCase
         config(['transaction-verification.second_engine.url' => $url]);
         $wrong = [];
 
-        foreach ($this->expected() as $id => $expected) {
-            $second = app(InstaPayReceiptParser::class)->parse(app(RapidOcrEngine::class)->read(self::FIXTURES."/{$id}.png"));
+        $expected = $this->expected();
+
+        foreach ($this->receipts() as $id => $path) {
+            $second = app(InstaPayReceiptParser::class)->parse(app(RapidOcrEngine::class)->read($path));
             // confirmedBy() drops any field the two read differently to 0, which wrong() reports.
-            array_push($wrong, ...$this->wrong($id, $expected, $this->read(self::FIXTURES."/{$id}.png")->confirmedBy($second)));
+            array_push($wrong, ...$this->wrong($id, $expected[$id], $this->read($path)->confirmedBy($second)));
         }
 
         $this->assertSame([], $wrong, 'Fields read wrong: '.implode(', ', $wrong));
@@ -94,6 +100,43 @@ class RealReceiptOcrTest extends TestCase
                 $this->markTestSkipped("Needs {$binary} and the git-ignored fixtures with expected.json.");
             }
         }
+    }
+
+    /**
+     * Every receipt expected.json names, paired with the file holding it. The id is whatever the ground truth
+     * calls it and the extension is whatever was saved, so neither is assumed here.
+     *
+     * @return array<string, string>
+     */
+    private function receipts(): array
+    {
+        $paths = [];
+
+        foreach (array_keys($this->expected()) as $id) {
+            if (! $path = (glob(self::FIXTURES."/{$id}.*") ?: [null])[0]) {
+                $this->markTestSkipped("expected.json names {$id}, but the fixtures hold no {$id}.* to read.");
+            }
+
+            $paths[(string) $id] = $path;
+        }
+
+        if ($paths === []) {
+            $this->markTestSkipped('expected.json names no receipts.');
+        }
+
+        return $paths;
+    }
+
+    /**
+     * One receipt, for the cases that re-save a single file rather than read them all.
+     *
+     * @return array{string, string} id and path
+     */
+    private function oneReceipt(): array
+    {
+        $receipts = $this->receipts();
+
+        return [(string) array_key_first($receipts), reset($receipts)];
     }
 
     private function expected(): array
@@ -130,9 +173,9 @@ class RealReceiptOcrTest extends TestCase
     }
 
     /** The screenshot stored sideways as a phone camera does: pixels turned left, EXIF Orientation 6 ("turn right to view"). */
-    private function sidewaysPhotoOf(string $png): string
+    private function sidewaysPhotoOf(string $receipt): string
     {
-        $source = imagecreatefrompng($png);
+        $source = imagecreatefromstring((string) file_get_contents($receipt));
         $flat = imagecreatetruecolor(imagesx($source), imagesy($source));
         imagefill($flat, 0, 0, imagecolorallocate($flat, 255, 255, 255));
         imagecopy($flat, $source, 0, 0, 0, 0, imagesx($source), imagesy($source));
@@ -148,9 +191,9 @@ class RealReceiptOcrTest extends TestCase
     }
 
     /** A one-page PDF holding the screenshot as a JPEG at 150 dpi, the way a "save as PDF" tool writes it. */
-    private function pdfOf(string $png): string
+    private function pdfOf(string $receipt): string
     {
-        $source = imagecreatefrompng($png);
+        $source = imagecreatefromstring((string) file_get_contents($receipt));
         [$w, $h] = [imagesx($source), imagesy($source)];
         $flat = imagecreatetruecolor($w, $h);
         imagefill($flat, 0, 0, imagecolorallocate($flat, 255, 255, 255));
