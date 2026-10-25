@@ -73,13 +73,19 @@ class RealReceiptOcrTest extends TestCase
     public function test_both_engines_read_every_real_receipt_the_same(): void
     {
         $this->needs('tesseract');
-        $url = (string) env('TRANSACTION_VERIFICATION_RAPIDOCR_URL');
 
-        if ($url === '' || ! rescue(fn () => Http::timeout(3)->get(rtrim($url, '/').'/health')->successful(), false, report: false)) {
-            $this->markTestSkipped('Needs the ocr_rapid sidecar: set TRANSACTION_VERIFICATION_RAPIDOCR_URL (e.g. http://localhost:18080).');
+        // Either way of reaching RapidOCR counts: the installed binary first, since that is what a host now
+        // runs, and a sidecar URL second. Only with neither is there nothing to cross-confirm against.
+        if (! is_file((string) config('transaction-verification.second_engine.binary'))) {
+            $url = (string) env('TRANSACTION_VERIFICATION_RAPIDOCR_URL');
+
+            if ($url === '' || ! rescue(fn () => Http::timeout(3)->get(rtrim($url, '/').'/health')->successful(), false, report: false)) {
+                $this->markTestSkipped('Needs the engine: run transaction-verification:install-ocr, or point TRANSACTION_VERIFICATION_RAPIDOCR_URL at a running sidecar.');
+            }
+
+            config(['transaction-verification.second_engine.binary' => null, 'transaction-verification.second_engine.url' => $url]);
         }
 
-        config(['transaction-verification.second_engine.url' => $url]);
         $wrong = [];
 
         $expected = $this->expected();
