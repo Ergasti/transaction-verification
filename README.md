@@ -4,8 +4,8 @@ Reads a payout receipt screenshot (InstaPay, bank, card or mobile wallet; image 
 the caller expected: the amount, where the money went, and whether the same receipt was already used for another
 payout. It **warns, it never blocks**: a verdict is advice for a person, and anything unsure goes to review.
 
-Two OCR engines read every receipt (Tesseract in the app's image, RapidOCR in a small container), and a deciding
-field counts only when both read it the same. The receipt is read straight from the upload and **never stored**: only
+Two OCR engines read every receipt (Tesseract from the system packages, RapidOCR as a binary the package installs),
+and a deciding field counts only when both read it the same. The receipt is read straight from the upload and **never stored**: only
 the verdict, the fields read (encrypted) and the fingerprints that catch a reused receipt are kept.
 
 A Laravel 11 or 12 package (PHP 8.3+). The namespace is `Modules\TransactionVerification`.
@@ -36,7 +36,8 @@ The package keeps its two tables on the database connection you name (defined in
 |---|---|---|
 | `TRANSACTION_VERIFICATION_DB_CONNECTION` | the app's default | Another connection, if the tables live elsewhere |
 | `TRANSACTION_VERIFICATION_HMAC_KEY` | `APP_KEY` | A long random secret. It keys the blind index of receipt numbers and destinations: **never change it** once rows exist, or duplicates stop being found |
-| `TRANSACTION_VERIFICATION_RAPIDOCR_URL` | `http://ocr_rapid:8080` | Where the RapidOCR container answers |
+| `TRANSACTION_VERIFICATION_RAPIDOCR_BINARY` | where `install-ocr` puts it | Another path to the RapidOCR binary. Not normally set |
+| `TRANSACTION_VERIFICATION_RAPIDOCR_URL` | `http://ocr_rapid:8080` | Only used when no binary is installed: a RapidOCR HTTP endpoint instead |
 | `TRANSACTION_VERIFICATION_ENABLED` | `false` | Only read by callers that check it (a switch for your own submit code) |
 
 **3. No config file needed.** Every setting is an env variable. Set `TRANSACTION_VERIFICATION_DB_CONNECTION` in every
@@ -49,56 +50,41 @@ database. Changed it after migrating? Run `php artisan migrate` again: the table
 once the response is sent, e.g. inside `app()->terminating(...)`: the user never waits, and the upload is still on
 disk until the request ends.
 
-**5. OCR.**
-- Tesseract and Poppler in the app's image: `apt-get install tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng poppler-utils`.
-- RapidOCR as a compose service, from the image the package publishes with each release:
+**5. OCR.** Two system packages and one command. No Docker, no registry login, and **no Python** -- the engine
+carries its own interpreter.
 
-```yaml
-ocr_rapid:
-  image: ghcr.io/ergasti/transaction-verification-ocr:0.5.1   # the same version as the package
-  restart: always
-  mem_limit: 2g
-  cpus: 4
-  environment:
-    OCR_THREADS: 4   # keep <= cpus
+```bash
+sudo apt install tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng poppler-utils
+php artisan transaction-verification:install-ocr
 ```
 
-No port needs publishing; the app reaches it on the compose network. Down or slow, receipts go to a person, never
-approved.
+On macOS: `brew install tesseract tesseract-lang poppler`.
 
-- **Keep the image version equal to the package version** (`composer show ergasti/transaction-verification`).
-- **The image is private:** each server logs in once (see [Pulling the OCR image](#pulling-the-ocr-image) below).
-- **Fallback:** `build: ./vendor/ergasti/transaction-verification/ocr-sidecar` instead of `image:` (needs internet for
-  the build, ~1 GB).
+- **Tesseract** reads every receipt. **Poppler** (`pdftoppm`) is used only when a receipt arrives as a PDF, so a host
+  that only ever sees screenshots does not need it.
+- `install-ocr` downloads the frozen RapidOCR engine for this platform from the package's GitHub Release, verifies its
+  SHA256 **before** unpacking, puts it under `storage/app/transaction-verification/ocr`, and then runs it once to prove
+  it starts. Built platforms: `linux-x86_64` and `macos-arm64`.
+- It finishes by reporting the two host binaries. A missing Tesseract fails the command; a missing Poppler only warns.
+- The engine release it fetches is **this package's own version**, so the two cannot drift. It records which
+  release it installed and says so if a later run finds a different one.
+- Run it again with `--force` after upgrading the package, to replace the installed engine.
+- `--release=v0.5.1` overrides that, for a rollback or for a development checkout (where the package reports
+  `dev-main` and matches no release, so the command asks rather than guessing).
+- Nothing listens on a port and no service runs: the app starts the engine for one receipt and it exits.
 
-#### Pulling the OCR image
+Why the engines are not all in the archive: Tesseract and Poppler come from the distribution, which signs and patches
+them -- bundling them would make every CVE in libtiff or leptonica our release to cut. RapidOCR has no distribution
+package, so it is the one thing shipped.
 
-The image is private, so GitHub hands it only to a logged-in server. Do this **once per server**:
-
-1. **Make a token** on GitHub: Settings → Developer settings → Personal access tokens → **Tokens (classic)** →
-   Generate new token. Tick **only `read:packages`** (it can download packages and nothing else). Prefer an
-   account meant for servers (a bot account in the Ergasti org) over a person's, so it survives people leaving.
-   Give it an expiry you will notice, and note where it is used.
-2. **Log in on the server**, as the user that runs `docker compose`:
-   ```bash
-   echo <token> | docker login ghcr.io -u <github-username> --password-stdin
-   ```
-   It prints `Login Succeeded`. Piping the token keeps it out of the shell history; Docker stores the login, so
-   later pulls just work.
-3. **Pull and start it:** `docker compose pull ocr_rapid && docker compose up -d ocr_rapid`, then check
-   `docker compose ps ocr_rapid` shows **healthy**.
-
-- **Skipped or expired login:** the pull fails with `denied` / `unauthorized` and the container doesn't start (an
-  already running one keeps running). Payouts are unaffected: without the second engine, receipts go to a person,
-  never to a wrong match. Log in and pull again.
-- **Rotating the token:** make a new one, run the same `docker login` with it, then revoke the old one. Nothing else
-  changes.
+If the engine is missing or cannot run (an unbuilt platform, or `storage` on a filesystem mounted `noexec` -- the
+command says which), receipts simply go to a person. They are never approved on one engine's word.
 
 **6. Keep running:** the scheduler. Every 5 minutes it marks `failed` a check that died mid-way (a crash or the time
 limit), so a person looks at that receipt. No queue worker is needed.
 
 Without Tesseract (a laptop), set `TRANSACTION_VERIFICATION_ENGINE=null`: receipts still get a row, and without the
-RapidOCR container they come back `unreadable`.
+RapidOCR engine they come back `unreadable`.
 
 ## Formats
 

@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Process;
 use Modules\TransactionVerification\Services\Ocr\RapidOcrEngine;
 use Modules\TransactionVerification\Services\Preprocess\ImagePreprocessor;
 use Modules\TransactionVerification\Tests\TestCase;
+use RuntimeException;
 
 /** The sidecar is faked; RealReceiptOcrTest reads the real receipts through the real one. */
 class RapidOcrEngineTest extends TestCase
@@ -19,6 +20,12 @@ class RapidOcrEngineTest extends TestCase
 
     /** Records the images the engine had made, so only this test's files are checked (paratest shares /tmp). */
     private ImagePreprocessor $spy;
+
+    /** @var list<string> stub binaries to delete; the is_file() branch needs a real file (GOTCHA 2). */
+    private array $stubs = [];
+
+    /** Where a stub binary writes the path it was handed, so the argument can be asserted. */
+    private string $argv;
 
     protected function setUp(): void
     {
@@ -41,11 +48,32 @@ class RapidOcrEngineTest extends TestCase
 
         $this->jpeg = (string) tempnam(sys_get_temp_dir(), 'tv_test_');
         imagejpeg(imagecreatetruecolor(40, 20), $this->jpeg);
+        $this->argv = (string) tempnam(sys_get_temp_dir(), 'tv_argv_');
+    }
+
+    /**
+     * A stub binary that records its argument and prints `$stdout`. A real script, not a Process fake:
+     * the point is to exercise Process::run() and the exit code the engine branches on.
+     */
+    private function useBinary(string $stdout, int $exit = 0): string
+    {
+        $binary = $this->stubs[] = (string) tempnam(sys_get_temp_dir(), 'tv_stub_');
+        file_put_contents($binary, "#!/bin/sh\nprintf '%s' \"$1\" > {$this->argv}\ncat <<'JSON'\n{$stdout}\nJSON\nexit {$exit}\n");
+        chmod($binary, 0700);
+
+        config(['transaction-verification.second_engine.binary' => $binary]);
+
+        return $binary;
     }
 
     protected function tearDown(): void
     {
         @unlink($this->jpeg);
+        @unlink($this->argv);
+
+        foreach ($this->stubs as $stub) {
+            @unlink($stub);
+        }
 
         parent::tearDown();
     }
@@ -97,7 +125,8 @@ class RapidOcrEngineTest extends TestCase
         file_put_contents($pdf, "%PDF-1.4\n");
         $page = null;
 
-        Process::fake(['*' => function (PendingProcess $process) use (&$page) {
+        // Narrowed to the renderer: '*' would also swallow a configured binary's read and go green for it.
+        Process::fake(["'pdftoppm'*" => function (PendingProcess $process) use (&$page) {
             $page = end($process->command).'.png';
             imagepng(imagecreatetruecolor(30, 30), $page);
 
@@ -112,6 +141,95 @@ class RapidOcrEngineTest extends TestCase
         }
 
         Process::assertRan(fn (PendingProcess $process) => $process->command[0] === 'pdftoppm');
+        $this->assertFileDoesNotExist($page);
+        $this->assertDirectoryDoesNotExist(dirname($page));
+        $this->assertMadeAndRemoved(1);
+    }
+
+    public function test_an_installed_binary_reads_the_image_instead_of_the_sidecar(): void
+    {
+        $this->useBinary('{"lines":["To Instapay"," 01000000001 ",7],"version":"rapidocr 3.9.2"}');
+
+        $engine = app(RapidOcrEngine::class);
+
+        $this->assertSame("To Instapay\n 01000000001", $engine->read($this->jpeg));
+        $this->assertSame('rapidocr 3.9.2', $engine->version());
+        // The binary wins over a configured URL, and gets the preprocessor's PNG, never the upload.
+        Http::assertNothingSent();
+        $this->assertSame($this->spy->made[0], file_get_contents($this->argv));
+        $this->assertMadeAndRemoved(1);
+    }
+
+    public function test_a_failing_binary_throws_leaves_no_temp_file_and_forgets_the_version(): void
+    {
+        $this->useBinary('{"lines":[],"version":"rapidocr good"}');
+        $engine = app(RapidOcrEngine::class);
+        $engine->read($this->jpeg);
+        $this->assertSame('rapidocr good', $engine->version());
+
+        // Its error body goes to stdout, not stderr, so the message has to come from there.
+        $this->useBinary('{"error":"not an image"}', 3);
+
+        try {
+            $engine->read($this->jpeg);
+            $this->fail('A failing binary must throw.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('not an image', $e->getMessage());
+        }
+
+        $this->assertSame('unknown', $engine->version());
+        $this->assertMadeAndRemoved(2);
+    }
+
+    public function test_an_answer_that_is_not_json_throws_rather_than_reading_nothing(): void
+    {
+        // '' would pass for a successful empty read; secondRead() must see a throw and ask a person.
+        $this->useBinary('Traceback (most recent call last): boom');
+
+        $engine = app(RapidOcrEngine::class);
+
+        $this->expectException(RuntimeException::class);
+
+        try {
+            $engine->read($this->jpeg);
+        } finally {
+            $this->assertSame('unknown', $engine->version());
+            $this->assertMadeAndRemoved(1);
+        }
+    }
+
+    public function test_a_binary_that_is_not_installed_falls_back_to_the_sidecar(): void
+    {
+        config(['transaction-verification.second_engine.binary' => '/nonexistent/tv-ocr']);
+        Http::fake(['ocr.test/read' => Http::response(['lines' => ['over http'], 'version' => 'v'])]);
+
+        $this->assertSame('over http', app(RapidOcrEngine::class)->read($this->jpeg));
+        $this->assertMadeAndRemoved(1);
+    }
+
+    public function test_a_pdf_is_rendered_then_handed_to_the_binary(): void
+    {
+        $pdf = (string) tempnam(sys_get_temp_dir(), 'tv_test_');
+        file_put_contents($pdf, "%PDF-1.4\n");
+        $page = null;
+
+        // Only the renderer is faked; the stub binary below runs for real.
+        Process::fake(["'pdftoppm'*" => function (PendingProcess $process) use (&$page) {
+            $page = end($process->command).'.png';
+            imagepng(imagecreatetruecolor(30, 30), $page);
+
+            return Process::result();
+        }]);
+        $this->useBinary('{"lines":["page one"],"version":"v"}');
+
+        try {
+            $this->assertSame('page one', app(RapidOcrEngine::class)->read($pdf));
+        } finally {
+            @unlink($pdf);
+        }
+
+        Process::assertRan(fn (PendingProcess $process) => $process->command[0] === 'pdftoppm');
+        Http::assertNothingSent();
         $this->assertFileDoesNotExist($page);
         $this->assertDirectoryDoesNotExist(dirname($page));
         $this->assertMadeAndRemoved(1);

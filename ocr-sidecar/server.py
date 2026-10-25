@@ -3,6 +3,9 @@
 POST /read  body: one image (<= 10 MB)  ->  {"lines": [...], "version": "...", "ms": {decode, detect, ..., total}}
 GET  /health                             ->  {"version": "..."}
 
+`python server.py <path>` instead reads that one image and prints the same body on stdout, exit 0; any failure
+prints {"error": ...} and exits non-zero. That is how the frozen binary is invoked -- one image, no server, no port.
+
 One read at a time (a lock), so memory stays at one model while queue workers wait their turn; /health is answered
 on its own thread even during a read, so a busy sidecar never looks wedged to the healthcheck. Receipt text is never
 logged. `python server.py --warm` builds the engine (downloading the models) and exits.
@@ -109,6 +112,51 @@ def reread(image, row, pad=8):
     return " ".join(text for _, text in sorted(row["parts"]))
 
 
+def read_image(image):
+    """A decoded image read whole or in slices, as (lines, RapidOCR's own step seconds summed over the slices).
+
+    The caller owns decoding, so decode and total are its to time: over HTTP both are measured inside the
+    lock, a one-shot CLI read measures its own.
+    """
+    found, det, rec, join = [], 0, 0, 0
+    for piece in slices(image):
+        # Every call names its steps: RapidOCR keeps the last call's use_* flags (reread() turns det off).
+        result = ENGINE(piece, use_det=True, use_cls=False, use_rec=True)
+        read = time.perf_counter()
+        found += lines(piece, result)
+        join += time.perf_counter() - read
+        # Numbers only. RapidOCR times its own steps; an empty result may have none.
+        piece_det, _, piece_rec = (list(getattr(result, "elapse_list", None) or []) + [0, 0, 0])[:3]
+        det, rec = det + (piece_det or 0), rec + (piece_rec or 0)
+    return found, {"detect": det, "recognise": rec, "join": join}
+
+
+def read_file(path):
+    """One image from disk as (the body /read would answer, an exit code). No lock: a one-shot read owns the process."""
+    try:
+        if not 0 < os.path.getsize(path) <= MAX_BYTES:
+            return {"error": "expected one image of at most 10 MB"}, 2
+        start = time.perf_counter()
+        with open(path, "rb") as f:
+            body = f.read()
+    except OSError:
+        return {"error": "could not read the file"}, 2
+
+    image = cv2.imdecode(np.frombuffer(body, np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        return {"error": "not an image"}, 3
+
+    try:
+        decoded = time.perf_counter()
+        found, steps = read_image(image)
+    except Exception as e:  # noqa: BLE001 - the CLI's 500: the caller turns any engine failure into a review
+        return {"error": type(e).__name__}, 4
+
+    done = time.perf_counter()
+    timings = {"decode": decoded - start, **steps, "total": done - start}
+    return {"lines": found, "version": VERSION, "ms": {k: round((v or 0) * 1000) for k, v in timings.items()}}, 0
+
+
 class Handler(BaseHTTPRequestHandler):
     # Seconds a client may stall mid-request before its thread gives up on it.
     timeout = 30
@@ -138,21 +186,12 @@ class Handler(BaseHTTPRequestHandler):
 
             try:
                 decoded = time.perf_counter()
-                found, det, rec, join = [], 0, 0, 0
-                for piece in slices(image):
-                    # Every call names its steps: RapidOCR keeps the last call's use_* flags (reread() turns det off).
-                    result = ENGINE(piece, use_det=True, use_cls=False, use_rec=True)
-                    read = time.perf_counter()
-                    found += lines(piece, result)
-                    join += time.perf_counter() - read
-                    # Numbers only. RapidOCR times its own steps; an empty result may have none.
-                    piece_det, _, piece_rec = (list(getattr(result, "elapse_list", None) or []) + [0, 0, 0])[:3]
-                    det, rec = det + (piece_det or 0), rec + (piece_rec or 0)
+                found, steps = read_image(image)
             except Exception as e:  # noqa: BLE001 - any engine failure is a 500 the caller turns into a review
                 return self.reply(500, {"error": type(e).__name__})
 
         done = time.perf_counter()
-        timings = {"decode": decoded - start, "detect": det, "recognise": rec, "join": join, "total": done - start}
+        timings = {"decode": decoded - start, **steps, "total": done - start}
         self.reply(200, {"lines": found, "version": VERSION, "ms": {k: round((v or 0) * 1000) for k, v in timings.items()}})
 
     def reply(self, status, body):
@@ -167,5 +206,13 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-if __name__ == "__main__" and "--warm" not in sys.argv:
-    ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+if __name__ == "__main__":
+    if "--warm" in sys.argv:
+        pass  # Importing this module already built ENGINE and fetched the models: that was the warm-up.
+    elif len(sys.argv) > 1:
+        # json.dumps here, not reply(): same keys, same ensure_ascii=False, stdout instead of a socket.
+        answer, status = read_file(sys.argv[1])
+        print(json.dumps(answer, ensure_ascii=False))
+        sys.exit(status)
+    else:
+        ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()

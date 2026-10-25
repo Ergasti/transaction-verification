@@ -1,0 +1,76 @@
+name: binary
+
+on:
+  pull_request:
+    paths: ['ocr-sidecar/**', '.github/workflows/binary.yml']
+  push:
+    tags: ['v*']
+
+# Action majors: checkout@v7 matches sidecar.yml; the rest are pinned low deliberately. tests.yml still
+# uses checkout@v4, so the repo has no single convention -- bump these to whatever is current here.
+jobs:
+  archive:
+    strategy:
+      # Both platforms report, so one failure never hides the other's state.
+      fail-fast: false
+      matrix:
+        include:
+          # manylinux, not ubuntu-latest: the frozen binary links the build host's libc, and a runner's
+          # glibc is newer than the servers'. 2_28 reaches back past every supported Ubuntu.
+          - platform: linux-x86_64
+            runs-on: ubuntu-latest
+            container: quay.io/pypa/manylinux_2_28_x86_64
+            python: /opt/python/cp311-cp311/bin/python
+          - platform: macos-arm64
+            runs-on: macos-14
+            python: python3
+    runs-on: ${{ matrix.runs-on }}
+    container: ${{ matrix.container }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - if: matrix.container == ''
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build the archive
+        env:
+          PYTHON: ${{ matrix.python }}
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('0.0.0-{0}', github.sha) }}
+        run: ocr-sidecar/build-archive.sh "$GITHUB_WORKSPACE/out"
+
+      # The point of the job. A clean build still fails if an ONNX or OpenVINO provider was left out, and
+      # only running the thing shows it -- so the archive that gets published is one that has read a receipt.
+      - name: Read a drawn receipt with the built binary
+        env:
+          PYTHON: ${{ matrix.python }}
+        run: |
+          "$PYTHON" -m pip install --quiet pillow==12.3.0
+          tar -xzf out/*.tar.gz -C out
+          "$PYTHON" ocr-sidecar/smoke_test.py "$(echo out/tv-ocr-*/tv-ocr)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: |
+            out/*.tar.gz
+            out/*.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: archive
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Downloaded, never rebuilt: the published archive is the one just tested.
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" out/*.tar.gz out/*.sha256 --clobber --repo "$GITHUB_REPOSITORY"

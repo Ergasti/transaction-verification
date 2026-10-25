@@ -40,6 +40,10 @@ class ModuleBootTest extends TestCase
 
         $this->assertStringContainsString("env('TRANSACTION_VERIFICATION_ENGINE', 'tesseract')", $file);
         $this->assertStringContainsString("env('TRANSACTION_VERIFICATION_SECOND_ENGINE', 'always')", $file);
+        // Defaults to where install-ocr unpacks it; is_file() decides, so not-yet-installed falls back to the sidecar.
+        $this->assertStringContainsString("env('TRANSACTION_VERIFICATION_RAPIDOCR_BINARY', storage_path('app/transaction-verification/ocr/tv-ocr'))", $file);
+        // Poppler is the host's: a bundled default would be a path that never exists.
+        $this->assertStringContainsString("env('TRANSACTION_VERIFICATION_PDFTOPPM_BINARY', 'pdftoppm')", $file);
         $this->assertStringContainsString("env('TRANSACTION_VERIFICATION_CONFIDENCE', 0.90)", $file);
         // Nothing is exposed until a caller exists and its secret is set.
         $this->assertStringContainsString("env('TRANSACTION_VERIFICATION_API_ENABLED', false)", $file);

@@ -6,6 +6,7 @@ use Illuminate\Process\Pool;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
 use Modules\TransactionVerification\Contracts\OcrEngine;
+use Modules\TransactionVerification\Services\BinaryError;
 use Modules\TransactionVerification\Services\Preprocess\ImagePreprocessor;
 use Modules\TransactionVerification\Services\Preprocess\PdfPage;
 use RuntimeException;
@@ -13,6 +14,8 @@ use RuntimeException;
 /** Reads a receipt once per configured pass (scale and threshold); the parser votes across the passes. */
 class TesseractEngine implements OcrEngine
 {
+    private const INSTALL = 'Install it with your package manager: apt install tesseract-ocr tesseract-ocr-ara, or brew install tesseract tesseract-lang.';
+
     private ?string $version = null;
 
     public function __construct(
@@ -58,7 +61,8 @@ class TesseractEngine implements OcrEngine
                     $result = $results[(string) $i];
 
                     if (! $result->successful()) {
-                        throw new RuntimeException('tesseract failed: '.Str::limit($result->errorOutput(), 200));
+                        throw new RuntimeException(BinaryError::explain($config['binary'], $result->exitCode(), self::INSTALL)
+                            ?? 'tesseract failed: '.Str::limit($result->errorOutput(), 200));
                     }
 
                     // Tesseract ends each page with a form feed; strip it so it isn't taken for an empty pass.

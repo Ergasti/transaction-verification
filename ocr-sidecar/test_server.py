@@ -1,8 +1,11 @@
-"""Row joining and the HTTP handler, with a fake engine. Run at image build (Dockerfile) or:
-docker run --rm -v "$PWD:/t" -w /t tv-ocr-rapid python -m unittest test_server
+"""Row joining, the one-shot read and the HTTP handler, with a fake engine so no model is loaded.
+
+Run by build-archive.sh before it freezes anything, or directly: python -m unittest -q test_server
 """
 
 import json
+import os
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -176,6 +179,81 @@ class HandlerTest(unittest.TestCase):
 
         self.assertEqual(self.post(b"not an image"), (400, {"error": "not an image"}))
         self.assertEqual(server.ENGINE.calls, [])
+
+
+class OneShotTest(unittest.TestCase):
+    """`server.py <path>` -- read_file() in-process. A subprocess could not be given a FakeEngine,
+    and loading the real models is what FakeEngine exists to avoid; the CI artifact check covers
+    the frozen binary end to end."""
+
+    png = cv2.imencode(".png", np.zeros((60, 120), np.uint8))[1].tobytes()
+
+    def file(self, body):
+        handle, path = tempfile.mkstemp(suffix=".png")
+        self.addCleanup(os.unlink, path)
+        with os.fdopen(handle, "wb") as f:
+            f.write(body)
+        return path
+
+    def test_a_file_is_read_into_the_body_a_post_would_answer(self):
+        server.ENGINE = FakeEngine([(box(0, 0, 40, 30), "10"), (box(42, 2, 100, 30), "EGP")], reread=("10 EGP", 0.9))
+
+        answer, status = server.read_file(self.file(self.png))
+
+        self.assertEqual((status, answer["lines"], answer["version"]), (0, ["10 EGP"], server.VERSION))
+        self.assertEqual(set(answer["ms"]), {"decode", "detect", "recognise", "join", "total"})
+
+    def test_both_transports_answer_the_same_lines_and_version(self):
+        # The version string lands in the stored audit trail: drift would split one engine into two.
+        server.ENGINE = FakeEngine([(box(0, 0, 50, 20), "Amount")], elapse=[0.012, None, 0.034])
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+
+        request = urllib.request.Request(f"http://127.0.0.1:{httpd.server_port}/read", data=self.png)
+        with urllib.request.urlopen(request, timeout=10) as r:
+            over_http = json.loads(r.read())
+        answer, _ = server.read_file(self.file(self.png))
+
+        self.assertEqual(answer["lines"], over_http["lines"])
+        self.assertEqual(answer["version"], over_http["version"])
+        self.assertEqual(list(answer["ms"]), list(over_http["ms"]))
+
+    def test_a_file_that_is_not_an_image_is_refused(self):
+        server.ENGINE = FakeEngine([])
+
+        self.assertEqual(server.read_file(self.file(b"not an image")), ({"error": "not an image"}, 3))
+        self.assertEqual(server.ENGINE.calls, [])
+
+    def test_a_file_over_the_limit_is_refused_before_it_is_opened(self):
+        self.addCleanup(setattr, server, "MAX_BYTES", server.MAX_BYTES)
+        server.MAX_BYTES = len(self.png) - 1
+        server.ENGINE = FakeEngine([])
+
+        answer, status = server.read_file(self.file(self.png))
+
+        self.assertEqual((answer, status), ({"error": "expected one image of at most 10 MB"}, 2))
+        self.assertEqual(server.ENGINE.calls, [])
+
+    def test_an_empty_file_is_refused(self):
+        server.ENGINE = FakeEngine([])
+
+        self.assertEqual(server.read_file(self.file(b""))[1], 2)
+        self.assertEqual(server.ENGINE.calls, [])
+
+    def test_a_path_that_cannot_be_read_is_refused_rather_than_raising(self):
+        # PHP parses stdout: a traceback would be unparseable where an error body is not.
+        self.assertEqual(server.read_file("/nonexistent/receipt.png"), ({"error": "could not read the file"}, 2))
+
+    def test_an_engine_failure_is_reported_as_its_type(self):
+        class Boom:
+            def __call__(self, image, **flags):
+                raise ValueError("engine died")
+
+        server.ENGINE = Boom()
+
+        self.assertEqual(server.read_file(self.file(self.png)), ({"error": "ValueError"}, 4))
 
 
 if __name__ == "__main__":

@@ -4,11 +4,15 @@ namespace Modules\TransactionVerification\Services\Preprocess;
 
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
+use Modules\TransactionVerification\Services\BinaryError;
 use RuntimeException;
 
 /** Page 1 of a PDF receipt as a temp PNG, for either engine. */
 class PdfPage
 {
+    // Poppler is the host's, not ours: install-ocr does not and will not provide it.
+    private const INSTALL = 'This receipt is a PDF, which needs Poppler: apt install poppler-utils, or brew install poppler.';
+
     /** By content, not mime: the engines only get a path. */
     public function isPdf(string $path): bool
     {
@@ -48,7 +52,8 @@ class PdfPage
         if (! $result->successful() || ! is_file($prefix.'.png')) {
             $this->discard($prefix.'.png');
 
-            throw new RuntimeException('pdftoppm failed: '.(Str::limit($result->errorOutput(), 200) ?: 'no page rendered'));
+            throw new RuntimeException(BinaryError::explain($config['pdftoppm_binary'], $result->exitCode(), self::INSTALL)
+                ?? 'pdftoppm failed: '.(Str::limit($result->errorOutput(), 200) ?: 'no page rendered'));
         }
 
         return $prefix.'.png';

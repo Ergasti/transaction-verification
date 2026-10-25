@@ -53,6 +53,7 @@ class TransactionVerificationServiceProvider extends ServiceProvider
         }
         $this->commands([
             \Modules\TransactionVerification\Console\ShadowReportCommand::class,
+            \Modules\TransactionVerification\Console\InstallOcrCommand::class,
         ]);
 
         // 429s and the router's own 404/405 (a malformed uuid, a wrong method) in the API's JSON envelope too.

@@ -55,6 +55,9 @@ return [
     // Down, slow or failing, it reads nothing: on 'always' every match then waits for a person.
     'second_engine' => [
         'mode' => env('TRANSACTION_VERIFICATION_SECOND_ENGINE', 'always'),
+        // Where install-ocr puts it: one process per receipt, no port, no Docker, no Python on the host.
+        // Absent (not installed yet) falls back to `url`; with neither there is no second engine.
+        'binary' => env('TRANSACTION_VERIFICATION_RAPIDOCR_BINARY', storage_path('app/transaction-verification/ocr/tv-ocr')),
         'url' => env('TRANSACTION_VERIFICATION_RAPIDOCR_URL', 'http://ocr_rapid:8080'),
         // Seconds: ~0.4 s per receipt on its 4 cores (anything bigger is read at 1600 px), one at a time. Short, so a hung
         // sidecar frees the caller's PHP worker soon.
