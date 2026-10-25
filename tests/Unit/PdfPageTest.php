@@ -57,7 +57,7 @@ class PdfPageTest extends TestCase
         $this->assertFalse($this->pdf->isPdf('/nonexistent/receipt.pdf'));
     }
 
-    public function test_only_page_one_is_rendered_greyscale_and_bounded(): void
+    public function test_only_page_one_is_rendered_greyscale_and_scaled_by_width(): void
     {
         file_put_contents($this->file, "%PDF-1.4\n");
         $this->fakeRenderer();
@@ -66,7 +66,7 @@ class PdfPageTest extends TestCase
 
         try {
             Process::assertRan(fn (PendingProcess $process) => $process->command === [
-                'pdftoppm', '-png', '-gray', '-f', '1', '-l', '1', '-scale-to', '2400', '-singlefile',
+                'pdftoppm', '-png', '-gray', '-f', '1', '-l', '1', '-scale-to-x', '2400', '-scale-to-y', '-1', '-singlefile',
                 $this->file, dirname($page).'/page',
             ]);
             $this->assertFileExists($page);

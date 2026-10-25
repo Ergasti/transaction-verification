@@ -20,8 +20,12 @@ class PdfPage
     }
 
     /**
-     * -scale-to bounds the pixels whatever the page size (a 200-inch page renders 2400x2400 in 0.2 s).
-     * ponytail: 2400 tuned on screenshots saved as PDF; retune on real PDF receipts.
+     * Scaled by **width**, not to a box: -scale-to caps the longest side, so a stacked A4 confirmation
+     * (2479x7016) rendered 849 px wide and digits were misread -- the same defect server.py fixes with
+     * slicing. -scale-to-y -1 keeps the aspect ratio from the width.
+     *
+     * A page of any shape stays bounded by the timeout below and by ImagePreprocessor's 30 M-pixel
+     * pre-decode check, so no third cap is needed here.
      *
      * @return string the PNG path; the caller passes it to discard()
      */
@@ -40,7 +44,7 @@ class PdfPage
         try {
             // -gray: both engines grey it anyway, and the PNG comes out about 3x smaller.
             $result = Process::timeout((int) $config['timeout'])->run([
-                $config['pdftoppm_binary'], '-png', '-gray', '-f', '1', '-l', '1', '-scale-to', '2400', '-singlefile', $pdf, $prefix,
+                $config['pdftoppm_binary'], '-png', '-gray', '-f', '1', '-l', '1', '-scale-to-x', '2400', '-scale-to-y', '-1', '-singlefile', $pdf, $prefix,
             ]);
         } catch (\Throwable $e) {
             // A timeout throws, possibly after a partial page (personal data) was written.

@@ -138,8 +138,8 @@ class TesseractEngineTest extends TestCase
 
         $this->assertSame("text\ftext\ftext", $this->engine()->read($pdf));
         Process::assertRanTimes(fn (PendingProcess $process) => $process->command[0] === 'pdftoppm'
-            && array_slice($process->command, 1, 9) === ['-png', '-gray', '-f', '1', '-l', '1', '-scale-to', '2400', '-singlefile']
-            && $process->command[10] === $pdf, 1);
+            && array_slice($process->command, 1, 11) === ['-png', '-gray', '-f', '1', '-l', '1', '-scale-to-x', '2400', '-scale-to-y', '-1', '-singlefile']
+            && $process->command[12] === $pdf, 1);
         Process::assertRanTimes(fn (PendingProcess $process) => $process->command[0] === 'tesseract', 3);
         $this->assertFileDoesNotExist($page);
     }
