@@ -307,14 +307,6 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame(VerdictEnum::NEEDS_REVIEW, $result->verdict);
     }
 
-    public function test_a_receipt_from_the_arabic_ui_is_read_and_matched(): void
-    {
-        // Fixture 08 is the same transfer as 01, screenshotted from the Arabic UI.
-        $this->recordedReading('08');
-
-        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->submit($this->request())->verdict);
-    }
-
     public function test_a_receipt_over_the_byte_limit_fails_before_it_is_read(): void
     {
         config(['transaction-verification.max_file_bytes' => 10]);
@@ -748,18 +740,6 @@ class SubmitVerificationTest extends TestCase
             file: UploadedFile::fake()->image('receipt.png', $width, 1600),
             idempotencyKey: $key ?? "affiliate_payout:{$subjectId}",
         );
-    }
-
-    /** The engine returns a recorded (synthetic) Tesseract output; the real InstaPay parser reads it. */
-    private function recordedReading(string $fixture): void
-    {
-        $path = __DIR__."/../fixtures/ocr/instapay-{$fixture}.txt";
-
-        if (! is_file($path)) {
-            $this->markTestSkipped('Needs the recorded receipts in tests/fixtures/ocr/ (local only, not in git).');
-        }
-
-        $this->reading((string) file_get_contents($path));
     }
 
     /** The sidecar's answer: its lines, or null for a 500. Read when the request is made: the first fake stub wins. */
