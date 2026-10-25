@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.1
+
+Tests only; the package behaves exactly as `0.7.0`. The `0.7.0` work left an Arabic-UI test asserting a verdict
+against a recorded reading that is not in git, so it skipped everywhere and its assertion was never checked --
+and it was wrong: the test's request expects 3,070 EGP to one phone, while the fixture records a different real
+receipt, which only passed before because `duplicate` outranked every mismatch. Removed, with its now-unused
+helper. Arabic receipts stay covered by `InstaPayReceiptParserTest` and by the real-image test, which reads the
+six real screenshots against their transcribed ground truth.
+
 ## 0.7.0
 
 **Breaking.** Duplicate detection is removed. The checker compares a receipt with the amount and the destination;
