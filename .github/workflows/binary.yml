@@ -11,26 +11,29 @@ on:
 jobs:
   archive:
     strategy:
-      # Both platforms report, so one failure never hides the other's state.
+      # Every platform reports, so one failure never hides another's state.
       fail-fast: false
       matrix:
         include:
-          # manylinux, not ubuntu-latest: the frozen binary links the build host's libc, and a runner's
-          # glibc is newer than the servers'. 2_28 reaches back past every supported Ubuntu.
+          # ubuntu-22.04, the oldest runner GitHub still offers: the frozen binary links the build host's
+          # libc, so building here sets the floor at **glibc 2.35 -- Ubuntu 22.04 and newer**. A newer
+          # runner would silently narrow that; `ubuntu-latest` must not be used.
+          #
+          # manylinux_2_28 would reach further back but cannot be used: its Python is built static, and
+          # PyInstaller needs a shared libpython ("Python was built without a shared library").
+          #
+          # macos-arm64 is not built. PyInstaller cannot rewrite OpenVINO's bundled libhwloc.dylib
+          # ("file not in an order that can be processed"). Macs are developer machines here, not
+          # production; to try again, add a row and delete openvino/libs/libtbbbind* and libhwloc* from
+          # the venv before freezing -- OpenVINO treats them as optional NUMA helpers.
           - platform: linux-x86_64
-            runs-on: ubuntu-latest
-            container: quay.io/pypa/manylinux_2_28_x86_64
-            python: /opt/python/cp311-cp311/bin/python
-          - platform: macos-arm64
-            runs-on: macos-14
+            runs-on: ubuntu-22.04
             python: python3
     runs-on: ${{ matrix.runs-on }}
-    container: ${{ matrix.container }}
     steps:
       - uses: actions/checkout@v7
 
-      - if: matrix.container == ''
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 

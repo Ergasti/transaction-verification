@@ -7,7 +7,9 @@
   platform, verifies its SHA256 before unpacking, and runs it once to prove it starts. The archive carries a
   frozen interpreter, so **the server needs no Python at all** -- checked by reading a receipt with an empty
   `PATH`. Gone with it: the `ocr_rapid` compose service, the `read:packages` token, the per-server
-  `docker login`, and keeping an image version equal to the package version.
+  `docker login`, and keeping an image version equal to the package version. The archive is built for
+  **Linux x86_64 on glibc 2.35 or newer** (Ubuntu 22.04 and up) -- the only platform it is built for; anywhere
+  else, including macOS, keeps using the Docker sidecar, which stays supported.
 - **Upgrading is not automatic.** Install the two system packages, then the engine:
   `sudo apt install tesseract-ocr tesseract-ocr-ara poppler-utils` (macOS:
   `brew install tesseract tesseract-lang poppler`), then

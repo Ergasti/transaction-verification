@@ -28,7 +28,8 @@ class InstallOcrCommand extends Command
     private const MARKER = 'INSTALLED_TAG';
 
     /** Only what CI builds. Anything else must fail rather than fetch an archive for the wrong machine. */
-    private const PLATFORMS = ['Linux x86_64' => 'linux-x86_64', 'Darwin arm64' => 'macos-arm64'];
+    /** Only what binary.yml builds. macOS is absent on purpose -- see the comment in that workflow. */
+    private const PLATFORMS = ['Linux x86_64' => 'linux-x86_64'];
 
     protected $signature = 'transaction-verification:install-ocr
         {--force : Replace an archive that is already installed}

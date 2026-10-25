@@ -56,11 +56,11 @@ class InstallOcrCommandTest extends TestCase
     /** Skips where CI builds nothing, so the suite stays honest on an unsupported machine. */
     private function archiveName(): string
     {
-        if (! in_array(PHP_OS_FAMILY.' '.php_uname('m'), ['Linux x86_64', 'Darwin arm64'], true)) {
+        if (PHP_OS_FAMILY.' '.php_uname('m') !== 'Linux x86_64') {
             $this->markTestSkipped('No build for '.PHP_OS_FAMILY.' '.php_uname('m').'.');
         }
 
-        return 'tv-ocr-v0.1.0-'.(PHP_OS_FAMILY === 'Darwin' ? 'macos-arm64' : 'linux-x86_64');
+        return 'tv-ocr-v0.1.0-linux-x86_64';
     }
 
     public function test_it_installs_verifies_and_reports_the_host_binaries(): void
