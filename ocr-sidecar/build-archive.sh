@@ -46,6 +46,15 @@ venv="$build/venv/bin"
 # does not quietly drop them. A build that fails its own tests must not produce an archive.
 ( cd "$here" && "$venv/python" -m unittest -q test_server )
 
+# macOS only: PyInstaller rewrites every bundled dylib's dependency paths with install_name_tool, which
+# refuses OpenVINO's prebuilt libhwloc ("file not in an order that can be processed") and so fails the whole
+# build. hwloc and tbbbind only pin threads to NUMA nodes -- OpenVINO loads them if present and runs plainly
+# without them, and a laptop has one node anyway -- so the bundle is built without them.
+if [ "$os" = macos ]; then
+    rm -f "$build"/venv/lib/python*/site-packages/openvino/libs/libhwloc*.dylib \
+          "$build"/venv/lib/python*/site-packages/openvino/libs/libtbbbind*.dylib
+fi
+
 # Before freezing, not after: RapidOCR fetches its models on first use, and they have to be inside the
 # archive or every server needs internet access the first time it reads a receipt.
 ( cd "$here" && "$venv/python" server.py --warm )

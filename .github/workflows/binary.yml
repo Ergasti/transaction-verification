@@ -22,12 +22,14 @@ jobs:
           # manylinux_2_28 would reach further back but cannot be used: its Python is built static, and
           # PyInstaller needs a shared libpython ("Python was built without a shared library").
           #
-          # macos-arm64 is not built. PyInstaller cannot rewrite OpenVINO's bundled libhwloc.dylib
-          # ("file not in an order that can be processed"). Macs are developer machines here, not
-          # production; to try again, add a row and delete openvino/libs/libtbbbind* and libhwloc* from
-          # the venv before freezing -- OpenVINO treats them as optional NUMA helpers.
+          # macos-arm64 is a developer convenience, not production: nothing here is deployed to a Mac.
+          # build-archive.sh deletes OpenVINO's libhwloc and libtbbbind on macOS before freezing, because
+          # install_name_tool refuses to rewrite them; without that this row fails outright.
           - platform: linux-x86_64
             runs-on: ubuntu-22.04
+            python: python3
+          - platform: macos-arm64
+            runs-on: macos-14
             python: python3
     runs-on: ${{ matrix.runs-on }}
     steps:
