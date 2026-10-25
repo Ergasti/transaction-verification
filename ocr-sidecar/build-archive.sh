@@ -50,19 +50,15 @@ venv="$build/venv/bin"
 # refuses OpenVINO's prebuilt libhwloc ("file not in an order that can be processed") and so fails the whole
 # build. hwloc and tbbbind only pin threads to NUMA nodes -- OpenVINO loads them if present and runs plainly
 # without them, and a laptop has one node anyway -- so the bundle is built without them.
+# OpenVINO is not bundled on macOS. PyInstaller has to rewrite the rpath of every dylib it collects, and
+# install_name_tool refuses OpenVINO's ("link edit information does not fill the __LINKEDIT segment") -- not one
+# bad file but dozens, core libraries among them, so there is nothing to delete past. server.py therefore
+# defaults to ONNX Runtime on darwin, which reads the 9 real fixtures identically (~2x slower, measured).
+collect_openvino="--collect-all openvino"
+exclude_openvino=""
 if [ "$os" = macos ]; then
-    libs="$(echo "$build"/venv/lib/python*/site-packages/openvino/libs)"
-    [ -d "$libs" ] || { echo "build-archive.sh: no openvino/libs under $build/venv." >&2; exit 1; }
-    rm -f "$libs"/libhwloc*.dylib "$libs"/libtbbbind*.dylib
-
-    # PyInstaller ad-hoc signs everything it bundles, and codesign answers "internal error in Code Signing
-    # subsystem" on OpenVINO's prebuilt dylibs: they arrive signed by Intel and carry extended attributes from
-    # the wheel. Clearing both leaves plain files for PyInstaller to sign itself. Unlike hwloc these cannot be
-    # deleted -- libtbb is OpenVINO's threading runtime.
-    xattr -cr "$libs"
-    for dylib in "$libs"/*.dylib; do
-        codesign --remove-signature "$dylib" 2>/dev/null || true
-    done
+    collect_openvino=""
+    exclude_openvino="--exclude-module openvino"
 fi
 
 # Before freezing, not after: RapidOCR fetches its models on first use, and they have to be inside the
@@ -71,7 +67,7 @@ fi
 
 "$venv/pyinstaller" --noconfirm --clean --onedir --name tv-ocr \
     --distpath "$build/dist" --workpath "$build/work" --specpath "$build/spec" \
-    --collect-all rapidocr --collect-all onnxruntime --collect-all openvino \
+    --collect-all rapidocr --collect-all onnxruntime $collect_openvino $exclude_openvino \
     --collect-all shapely --collect-all pyclipper \
     "$here/server.py"
 

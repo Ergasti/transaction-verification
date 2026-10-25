@@ -30,12 +30,18 @@ MAX_BYTES = 10 * 1024 * 1024
 # (OCR_THREADS). Reads the 15 real receipts as exactly as the old server detector (~3.5 s); lines() mends its splits.
 THREADS = int(os.environ.get("OCR_THREADS", "4"))
 MAX_SIDE = 1600
+# Both runtimes read the same ONNX models and were measured reading the 9 real fixtures identically, line for
+# line, including the stacked page that goes through slices(). OpenVINO is about twice as fast on the big ones,
+# so it is the default -- except on macOS, where PyInstaller cannot bundle OpenVINO's dylibs (install_name_tool
+# refuses them: "link edit information does not fill the __LINKEDIT segment"), so a frozen Mac build has no
+# OpenVINO in it to load. OCR_ENGINE overrides either way.
+BACKEND = EngineType[os.environ.get("OCR_ENGINE", "ONNXRUNTIME" if sys.platform == "darwin" else "OPENVINO").upper()]
 ENGINE = RapidOCR(params={
     "Global.use_cls": False,
     "Global.log_level": "error",
     "Global.max_side_len": MAX_SIDE,
-    "Det.engine_type": EngineType.OPENVINO,
-    "Rec.engine_type": EngineType.OPENVINO,
+    "Det.engine_type": BACKEND,
+    "Rec.engine_type": BACKEND,
     "EngineConfig.openvino.inference_num_threads": THREADS,
     "Det.ocr_version": OCRVersion.PPOCRV5,
     "Det.model_type": ModelType.MOBILE,
@@ -45,7 +51,7 @@ ENGINE = RapidOCR(params={
     "EngineConfig.onnxruntime.intra_op_num_threads": THREADS,
     "EngineConfig.onnxruntime.inter_op_num_threads": 1,
 })
-VERSION = f"rapidocr {version('rapidocr')} / PP-OCRv5 mobile det, arabic rec, openvino, max side 1600, rows joined, tall sliced"
+VERSION = f"rapidocr {version('rapidocr')} / PP-OCRv5 mobile det, arabic rec, {BACKEND.value}, max side 1600, rows joined, tall sliced"
 READING = threading.Lock()
 
 # The MAX_SIDE cap applies to the longest side, so a big tall image (receipts stacked, a long screenshot) is read
