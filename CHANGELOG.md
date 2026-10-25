@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.0
+
+- **The second engine no longer needs Docker.** RapidOCR now ships as one archive on this repo's GitHub
+  Releases, installed by `php artisan transaction-verification:install-ocr`: it picks the archive for the
+  platform, verifies its SHA256 before unpacking, and runs it once to prove it starts. The archive carries a
+  frozen interpreter, so **the server needs no Python at all** -- checked by reading a receipt with an empty
+  `PATH`. Gone with it: the `ocr_rapid` compose service, the `read:packages` token, the per-server
+  `docker login`, and keeping an image version equal to the package version.
+- **Upgrading is not automatic.** Install the two system packages, then the engine:
+  `sudo apt install tesseract-ocr tesseract-ocr-ara poppler-utils` (macOS:
+  `brew install tesseract tesseract-lang poppler`), then
+  `php artisan transaction-verification:install-ocr`. Until the engine is installed the second engine is
+  simply absent, so receipts go to a person -- never to a wrong match. The compose service can be removed.
+- **Tesseract and Poppler stay the host's, on purpose.** Both have distribution packages that are signed and
+  patched, and both parse attacker-supplied images through leptonica, libtiff and libpng; bundling them would
+  make every advisory there a release for us to cut. RapidOCR has no distribution package, which is why it is
+  the one thing shipped. `install-ocr` reports whichever of the two is missing and names the command for it: a
+  missing Tesseract fails, a missing Poppler only warns, since only PDF receipts use it.
+- `install-ocr` takes its release from the package's own installed version, so the engine and the package
+  cannot drift; it records what it installed and says so when a later run finds a different release.
+  `--release=vX.Y.Z` overrides it for a rollback or a development checkout.
+- A missing or unrunnable binary now names its fix instead of surfacing an empty `stderr`. A binary on a
+  filesystem mounted `noexec` is reported as such by `install-ocr`, rather than failing once per receipt.
+- **PDF receipts are rendered by width** (`-scale-to-x`), not into a square box. `-scale-to` capped the longest
+  side, so a stacked AlexBank confirmation (2479 x 7016) rendered 849 px wide -- the same defect 0.5.1 fixed for
+  images, which the PDF path never got. Measured on the real fixtures: that stacked confirmation gains its
+  amount and its wallet number at full confidence and stops reporting a reference it had invented, while one
+  InstaPay receipt loses its amount and so goes to review. Both directions are safe; a field that is not read
+  cannot pass its check.
+- `server.py` gains a one-shot mode (`tv-ocr <path>` prints the same JSON `/read` answers) beside the HTTP
+  server, which is unchanged and still usable for a bulk backfill through one warm process.
+
 ## 0.5.1
 
 - The RapidOCR sidecar reads a big tall image (taller than its 1600 px cap and than 1.5 widths: receipts stacked, a

@@ -16,7 +16,7 @@ A Laravel 11 or 12 package (PHP 8.3+). The namespace is `Modules\TransactionVeri
 
 ```json
 "repositories": [{"type": "vcs", "url": "https://github.com/Ergasti/transaction-verification"}],
-"require": {"ergasti/transaction-verification": "^0.5"}
+"require": {"ergasti/transaction-verification": "^0.6"}
 ```
 
 ```bash
