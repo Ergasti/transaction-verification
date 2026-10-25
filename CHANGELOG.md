@@ -2,6 +2,15 @@
 
 ## 0.6.0
 
+- **No `.env` entry is required any more.** `enabled` defaults to **true** -- an app that required this package
+  wants it, and a variable you must set is a step an installer can skip; the variable remains, as the off switch.
+  `hmac_key` resolves to `APP_KEY` in config, so it is never blank where the app has one. **Once rows exist,
+  do not add a dedicated key and do not rotate `APP_KEY`**, or receipts stored before stop being found as
+  duplicates. `second_engine.url` has no default at all: it named the `ocr_rapid` compose service, which this
+  release deletes, and a dead hostname only turns a missing engine into a confusing connection error.
+- With neither a binary nor a URL, the second engine now says **"The second engine is not installed. Run php
+  artisan transaction-verification:install-ocr."** rather than posting a receipt to nowhere.
+
 - **The second engine no longer needs Docker.** RapidOCR now ships as one archive on this repo's GitHub
   Releases, installed by `php artisan transaction-verification:install-ocr`: it picks the archive for the
   platform, verifies its SHA256 before unpacking, and runs it once to prove it starts. The archive carries a

@@ -67,9 +67,13 @@ class RapidOcrEngine implements OcrEngine
         $binary = $config['binary'] ?? null;
 
         if (! is_string($binary) || $binary === '' || ! is_file($binary)) {
+            if (($url = trim((string) ($config['url'] ?? ''))) === '') {
+                throw new RuntimeException('The second engine is not installed. '.self::INSTALL);
+            }
+
             return (array) Http::timeout((int) $config['timeout'])
                 ->withBody((string) file_get_contents($image), 'image/png')
-                ->post(rtrim((string) $config['url'], '/').'/read')
+                ->post(rtrim($url, '/').'/read')
                 ->throw()
                 ->json();
         }

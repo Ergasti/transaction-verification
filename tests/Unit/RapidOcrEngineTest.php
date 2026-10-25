@@ -235,6 +235,17 @@ class RapidOcrEngineTest extends TestCase
         $this->assertMadeAndRemoved(1);
     }
 
+    /** Neither installed nor configured: the error names the command instead of a request to nowhere. */
+    public function test_it_says_the_engine_is_not_installed_when_there_is_no_binary_and_no_url(): void
+    {
+        config(['transaction-verification.second_engine.binary' => null, 'transaction-verification.second_engine.url' => null]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('The second engine is not installed. Run php artisan transaction-verification:install-ocr.');
+
+        app(RapidOcrEngine::class)->read($this->jpeg);
+    }
+
     private function assertMadeAndRemoved(int $count): void
     {
         $this->assertCount($count, $this->spy->made);

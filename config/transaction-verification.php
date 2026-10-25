@@ -1,16 +1,18 @@
 <?php
 
 return [
-    // For callers (e.g. a payout flow): submit receipts only when on. Off by default.
-    'enabled' => filter_var(env('TRANSACTION_VERIFICATION_ENABLED', false), FILTER_VALIDATE_BOOL),
+    // For callers (e.g. a payout flow): submit receipts only when on. On by default -- an app that installed
+    // this package wants it; the variable is the off switch, not the on switch.
+    'enabled' => filter_var(env('TRANSACTION_VERIFICATION_ENABLED', true), FILTER_VALIDATE_BOOL),
 
     // A deciding field read below this confidence turns a match, or a failed check on it, into needs_review. Confidence is the share of the
     // Tesseract passes that read the field and agree (a pass that read nothing doesn't count), so at 0.90 no pass that
     // read it may disagree; on 'always' the second engine must also read it the same, or it drops to 0.
     'confidence_threshold' => (float) env('TRANSACTION_VERIFICATION_CONFIDENCE', 0.90),
 
-    // Blind-index key; falls back to APP_KEY. Changing it orphans every stored hash.
-    'hmac_key' => env('TRANSACTION_VERIFICATION_HMAC_KEY'),
+    // Blind-index key, resolved here so it is never blank in an app that has APP_KEY. Changing it orphans
+    // every stored hash: once rows exist, do not set a dedicated key and do not rotate APP_KEY.
+    'hmac_key' => env('TRANSACTION_VERIFICATION_HMAC_KEY') ?: env('APP_KEY'),
 
     // Database connection for the receipt tables; unset = the app's default connection.
     'connection' => env('TRANSACTION_VERIFICATION_DB_CONNECTION'),
@@ -46,7 +48,8 @@ return [
         'early_passes' => (int) env('TRANSACTION_VERIFICATION_TESSERACT_EARLY_PASSES', 2),
     ],
 
-    // RapidOCR in the ocr_rapid sidecar, an engine unrelated to Tesseract, so their errors don't coincide.
+    // RapidOCR, an engine unrelated to Tesseract, so their errors don't coincide: the installed binary, or an
+    // HTTP endpoint running the same server.py.
     // 'always': it reads every receipt, and a deciding field Tesseract read counts only if it reads the same.
     // 'fallback': it reads only when Tesseract is unsure (a deciding field missing or under the threshold);
     //   it then fills a missing field (decided by RapidOCR alone), or confirms an unsure one it reads the same.
@@ -58,7 +61,9 @@ return [
         // Where install-ocr puts it: one process per receipt, no port, no Docker, no Python on the host.
         // Absent (not installed yet) falls back to `url`; with neither there is no second engine.
         'binary' => env('TRANSACTION_VERIFICATION_RAPIDOCR_BINARY', storage_path('app/transaction-verification/ocr/tv-ocr')),
-        'url' => env('TRANSACTION_VERIFICATION_RAPIDOCR_URL', 'http://ocr_rapid:8080'),
+        // No default: this named a compose service that no longer exists, and a dead hostname only turns a
+        // missing engine into a confusing connection error instead of an answer.
+        'url' => env('TRANSACTION_VERIFICATION_RAPIDOCR_URL'),
         // Seconds: ~0.4 s per receipt on its 4 cores (anything bigger is read at 1600 px), one at a time. Short, so a hung
         // sidecar frees the caller's PHP worker soon.
         'timeout' => 20,

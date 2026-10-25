@@ -37,8 +37,12 @@ The package keeps its two tables on the database connection you name (defined in
 | `TRANSACTION_VERIFICATION_DB_CONNECTION` | the app's default | Another connection, if the tables live elsewhere |
 | `TRANSACTION_VERIFICATION_HMAC_KEY` | `APP_KEY` | A long random secret. It keys the blind index of receipt numbers and destinations: **never change it** once rows exist, or duplicates stop being found |
 | `TRANSACTION_VERIFICATION_RAPIDOCR_BINARY` | where `install-ocr` puts it | Another path to the RapidOCR binary. Not normally set |
-| `TRANSACTION_VERIFICATION_RAPIDOCR_URL` | `http://ocr_rapid:8080` | Only used when no binary is installed: a RapidOCR HTTP endpoint instead |
-| `TRANSACTION_VERIFICATION_ENABLED` | `false` | Only read by callers that check it (a switch for your own submit code) |
+| `TRANSACTION_VERIFICATION_RAPIDOCR_URL` | none | Only used when no binary is installed: a RapidOCR HTTP endpoint instead |
+| `TRANSACTION_VERIFICATION_ENABLED` | `true` | `false` to switch the package off. Only read by callers that check it |
+
+**Nothing in that table is required.** An app with an `APP_KEY` can install this package, migrate, run `install-ocr`
+and submit a receipt without touching `.env` at all. The one thing to decide *before* the first `migrate` is the
+connection, below.
 
 **3. No config file needed.** Every setting is an env variable. Set `TRANSACTION_VERIFICATION_DB_CONNECTION` in every
 `.env` (put it in `.env.example`) **before the first `migrate`**: without it the tables go to the app's default
