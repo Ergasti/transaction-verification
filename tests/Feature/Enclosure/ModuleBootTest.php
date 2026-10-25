@@ -7,7 +7,6 @@ use Modules\TransactionVerification\Contracts\ReceiptParser;
 use Modules\TransactionVerification\Contracts\TransactionVerifier;
 use Modules\TransactionVerification\Data\ExtractedFields;
 use Modules\TransactionVerification\Models\TransactionVerification;
-use Modules\TransactionVerification\Models\TransactionVerificationDuplicate;
 use Modules\TransactionVerification\Services\Ocr\NullEngine;
 use Modules\TransactionVerification\Services\Ocr\TesseractEngine;
 use Modules\TransactionVerification\Services\Parsers\ReceiptRouter;
@@ -53,40 +52,22 @@ class ModuleBootTest extends TestCase
         // On by default: an app that required this package wants it, and a required variable is a step an
         // installer can skip. The variable remains, as the off switch.
         $this->assertStringContainsString("env('TRANSACTION_VERIFICATION_ENABLED', true)", $file);
-        // Never blank where the app has an APP_KEY, so no install needs a key of its own.
-        $this->assertStringContainsString("env('TRANSACTION_VERIFICATION_HMAC_KEY') ?: env('APP_KEY')", $file);
         // Nothing host-specific: the app's default connection unless set. No disk: receipts are never stored.
         $this->assertStringContainsString("env('TRANSACTION_VERIFICATION_DB_CONNECTION')", $file);
         $this->assertStringNotContainsString('TRANSACTION_VERIFICATION_DISK', $file);
     }
 
     /**
-     * What the file resolves to, not what it says: an app carrying only APP_KEY still gets a usable key and an
-     * enabled package, and an app that sets its own key still wins. This is the zero-env install.
+     * What the file resolves to, not what it says: an app that sets nothing of its own still gets an enabled
+     * package and a second engine. This is the zero-env install.
      */
-    public function test_an_app_with_only_an_app_key_needs_no_settings_of_its_own(): void
+    public function test_an_app_that_sets_nothing_gets_an_enabled_package(): void
     {
-        $before = [$_ENV['APP_KEY'] ?? null, $_ENV['TRANSACTION_VERIFICATION_HMAC_KEY'] ?? null];
-        $load = fn (): array => require __DIR__.'/../../../config/transaction-verification.php';
+        $settings = require __DIR__.'/../../../config/transaction-verification.php';
 
-        try {
-            $_ENV['APP_KEY'] = 'base64:the-app-key';
-            unset($_ENV['TRANSACTION_VERIFICATION_HMAC_KEY']);
-
-            $this->assertSame('base64:the-app-key', $load()['hmac_key'], 'no dedicated key: APP_KEY is used');
-            $this->assertTrue($load()['enabled'], 'nothing to switch on');
-
-            $_ENV['TRANSACTION_VERIFICATION_HMAC_KEY'] = 'a-dedicated-key';
-            $this->assertSame('a-dedicated-key', $load()['hmac_key'], 'a dedicated key still wins');
-        } finally {
-            foreach (array_combine(['APP_KEY', 'TRANSACTION_VERIFICATION_HMAC_KEY'], $before) as $key => $value) {
-                if ($value === null) {
-                    unset($_ENV[$key]);
-                } else {
-                    $_ENV[$key] = $value;
-                }
-            }
-        }
+        $this->assertTrue($settings['enabled'], 'nothing to switch on');
+        $this->assertSame('always', $settings['second_engine']['mode']);
+        $this->assertNull($settings['connection'], "the app's own default connection");
     }
 
     public function test_the_parser_follows_config(): void
@@ -103,7 +84,6 @@ class ModuleBootTest extends TestCase
         config(['transaction-verification.connection' => 'other']);
 
         $this->assertSame('other', (new TransactionVerification)->getConnectionName());
-        $this->assertSame('other', (new TransactionVerificationDuplicate)->getConnectionName());
         // An explicit connection still wins.
         $this->assertSame('picked', (new TransactionVerification)->setConnection('picked')->getConnectionName());
     }

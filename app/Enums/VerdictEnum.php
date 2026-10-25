@@ -7,7 +7,6 @@ enum VerdictEnum: string
 {
     case MATCH = 'match';
     case MISMATCH = 'mismatch';
-    case DUPLICATE = 'duplicate';
     case NEEDS_REVIEW = 'needs_review';
     case UNREADABLE = 'unreadable';
 

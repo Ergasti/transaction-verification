@@ -7,7 +7,7 @@ use Illuminate\Foundation\Events\Dispatchable;
 
 /**
  * Fired when a verdict is stored. Carries no phone, handle, image or OCR text.
- * Can fire again for the same uuid (a later copy re-checked into 'duplicate'): the latest one is current.
+ * Can fire again for the same uuid when a row is re-checked: the latest one is current.
  */
 class TransactionVerificationCompleted implements ShouldDispatchAfterCommit
 {

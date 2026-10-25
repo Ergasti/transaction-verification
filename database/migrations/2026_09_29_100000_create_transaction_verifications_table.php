@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * One row per submitted receipt. Kept forever (no soft delete, no pruning).
- * The destination, OCR text and extracted fields are encrypted by the model; lookups use HMAC hashes.
+ * The destination and extracted fields are encrypted by the model.
  */
 return new class extends Migration
 {
@@ -38,18 +38,15 @@ return new class extends Migration
             $table->bigInteger('expected_amount_minor');
             $table->char('currency', 3);
             $table->text('expected_destination');
-            $table->char('expected_destination_hash', 64);
             $table->string('file_disk', 32);
             $table->string('file_path');
             $table->string('file_mime', 100);
             $table->unsignedInteger('file_size');
-            $table->char('file_sha256', 64)->index();
             $table->string('engine', 32)->nullable();
             $table->string('engine_version', 64)->nullable();
             $table->longText('ocr_text')->nullable();
             $table->longText('second_ocr_text')->nullable();
             $table->text('extracted')->nullable();
-            $table->char('reference_hash', 64)->nullable()->index();
             $table->json('checks')->nullable();
             $table->decimal('confidence', 4, 3)->nullable();
             $table->string('error')->nullable();

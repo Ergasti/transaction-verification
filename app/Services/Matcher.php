@@ -15,21 +15,14 @@ class Matcher
 {
     /**
      * @param  list<ExpectedDestination>  $expected  the primary first, then the alternatives
-     * @param  list<array{id: int, uuid: string, method: string}>  $duplicates
      * @return array{verdict: VerdictEnum, checks: array<string, CheckResult>, confidence: ?float}
      */
-    public function decide(int $expectedAmountMinor, array $expected, ExtractedFields $found, array $duplicates, float $threshold): array
+    public function decide(int $expectedAmountMinor, array $expected, ExtractedFields $found, float $threshold): array
     {
         $expected = $this->decisive($expected, $found);
         $checks = [
             Check::AMOUNT->value => $this->amount($expectedAmountMinor, $found->amountMinor),
             Check::DESTINATION->value => $this->destination($expected, $found),
-            Check::DUPLICATE->value => $duplicates === []
-                ? new CheckResult(Outcome::PASS)
-                : new CheckResult(Outcome::FAIL, [
-                    'of' => array_values(array_unique(array_column($duplicates, 'uuid'))),
-                    'by' => array_values(array_unique(array_column($duplicates, 'method'))),
-                ]),
             // Informational in v1: a raw screenshot often has no reference. Never part of the verdict.
             Check::REFERENCE->value => new CheckResult($this->normaliseReference($found->reference) === null ? Outcome::MISSING : Outcome::PASS),
         ];
@@ -43,7 +36,7 @@ class Matcher
         ];
     }
 
-    /** The comparable form of a destination, also used for its blind index. */
+    /** The comparable form of a destination. */
     public function normaliseDestination(ExpectedDestination $destination): string
     {
         return match ($destination->type) {
@@ -72,7 +65,6 @@ class Matcher
         $sure = fn (string $field) => ($scores[$field] ?? 1.0) >= $threshold;
 
         return match (true) {
-            $checks[Check::DUPLICATE->value]->outcome === Outcome::FAIL => VerdictEnum::DUPLICATE,
             $amount === Outcome::MISSING || $destination === Outcome::MISSING => VerdictEnum::UNREADABLE,
             // A failed check is a mismatch only when that field was read surely; an unsure one goes to a person.
             ($amount === Outcome::FAIL && $sure('amount')) || ($destination === Outcome::FAIL && $sure($destinationKey)) => VerdictEnum::MISMATCH,

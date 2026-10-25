@@ -16,7 +16,6 @@ use Modules\TransactionVerification\Data\ExpectedDestination;
 use Modules\TransactionVerification\Data\ExtractedFields;
 use Modules\TransactionVerification\Data\VerificationRequest;
 use Modules\TransactionVerification\Data\VerificationResult;
-use Modules\TransactionVerification\Enums\CheckEnum;
 use Modules\TransactionVerification\Enums\DestinationTypeEnum;
 use Modules\TransactionVerification\Enums\ReceiptFormatEnum;
 use Modules\TransactionVerification\Enums\SecondEngineModeEnum;
@@ -35,7 +34,6 @@ class TransactionVerificationService implements TransactionVerifier
     public function __construct(
         private readonly OcrEngine $engine,
         private readonly ReceiptParser $parser,
-        private readonly DuplicateDetector $duplicates,
         private readonly Matcher $matcher,
         private readonly RapidOcrEngine $secondEngine,
     ) {}
@@ -65,10 +63,8 @@ class TransactionVerificationService implements TransactionVerifier
                     'value' => $destination->value,
                     'alternatives' => array_map(fn (ExpectedDestination $d) => ['type' => $d->type->value, 'value' => $d->value], $request->alternativeDestinations),
                 ],
-                'expected_destination_hash' => $this->blindIndex($destination->type->value.':'.$this->matcher->normaliseDestination($destination)),
                 'file_mime' => (string) $file->getMimeType(),
                 'file_size' => (int) $file->getSize(),
-                'file_sha256' => hash_file('sha256', $file->getRealPath()),
                 'idempotency_key' => $request->idempotencyKey,
                 'context' => $request->context,
             ]);
@@ -133,20 +129,13 @@ class TransactionVerificationService implements TransactionVerifier
     {
         $stale = fn () => TransactionVerification::where('updated_at', '<', now()->subMinutes((int) config('transaction-verification.stale_minutes')))
             ->whereIn('status', [VerificationStatusEnum::PENDING->value, VerificationStatusEnum::PROCESSING->value]);
-        $rows = $stale()->get(['id', 'subject_type', 'subject_id', 'reference_hash']);
-
-        $stale()->whereKey($rows->modelKeys())
-            ->update(['status' => VerificationStatusEnum::FAILED->value, 'error' => 'Gave up: the check stopped before it finished.', 'updated_at' => now()]);
-
-        // One that died after storing its reference never told the copies that finished before it.
-        $rows->each(fn (TransactionVerification $row) => $this->recheckLaterCopies($row, $row->reference_hash));
+        $stale()->update(['status' => VerificationStatusEnum::FAILED->value, 'error' => 'Gave up: the check stopped before it finished.', 'updated_at' => now()]);
     }
 
     private function check(TransactionVerification $row, string $path): ?TransactionVerificationCompleted
     {
         $id = $row->id;
         $attempt = $row->attempts;
-        $referenceHash = null;
         $started = hrtime(true);
 
         try {
@@ -157,19 +146,11 @@ class TransactionVerificationService implements TransactionVerifier
             $step = hrtime(true);
             [$text, $fields, $early, $passes] = $this->firstRead($path, $row);
             $timing = ['first_ms' => $this->ms($step)];
-            // Before the reference is hashed: on 'fallback' the second engine may supply it.
             [$fields, $secondText, $secondMs] = $this->secondRead($path, $row, $fields, $early);
             $timing['second_ms'] = $secondText === null ? null : $secondMs;
             $timing['passes'] = $passes;
 
-            // Normalised before the emptiness check: blank references must not all share one hash.
-            $reference = $this->matcher->normaliseReference($fields->reference);
-            $referenceHash = $reference === null ? null : $this->blindIndex('ref:'.$reference);
-
-            // Stored before the lookup: either a later copy's lookup sees it, or this row's later-copies check sees that copy.
-            $this->claimed($id, $attempt)->update(['reference_hash' => $referenceHash]);
-
-            $decision = $this->verdictFor($row, $fields, $referenceHash);
+            $decision = $this->verdictFor($row, $fields);
 
             // Before the row lock: version() may spawn a process.
             [$engineName, $engineVersion] = $secondText === null
@@ -204,27 +185,12 @@ class TransactionVerificationService implements TransactionVerifier
             // Numbers only: where a scan's time goes, from the real server.
             $this->quietly(fn () => Log::info('transaction-verification.timing', ['id' => $id, 'engine' => $engineName, ...$timing, 'total_ms' => $this->ms($started)]));
 
-            // Best effort: the verdict is stored, so a failure here is reported, never turned into 'failed'.
-            $this->recheckLaterCopies($row, $referenceHash);
-
-            // An original whose reference landed after this lookup, while this verdict was on its way, is seen now.
-            $redecided = rescue(fn () => $this->redecide($id), fn (Throwable $e) => $this->quietly(fn () => report($e)), report: false);
-
-            // Unchanged here, but another request may have re-decided this row meanwhile: announce what is stored now,
-            // so the last event is never an older verdict.
-            $current = $redecided ? null : rescue(fn () => TransactionVerification::find($id), null, report: false);
-
-            return $redecided ?? ($current?->status === VerificationStatusEnum::COMPLETED
-                ? $this->completedEvent($current, ['verdict' => $current->verdict, 'checks' => $current->checks ?? []])
-                : $this->completedEvent($row, $decision));
+            return $this->completedEvent($row, $decision);
         } catch (Throwable $e) {
             // A query, not the model: a half-filled model must not save its verdict next to 'failed'.
             // Only while this run holds it: a row the sweep marked failed keeps its reason.
             rescue(fn () => $this->claimed($id, $attempt)
                 ->update(['status' => VerificationStatusEnum::FAILED->value, 'error' => $this->errorText($e), 'updated_at' => now()]), report: false);
-
-            // A failed row keeps its stored reference, so copies that ran before it still get caught.
-            $this->recheckLaterCopies($row, $referenceHash);
 
             throw $e;
         }
@@ -303,7 +269,7 @@ class TransactionVerificationService implements TransactionVerifier
         return [$text, $fields, $early, count($first)];
     }
 
-    /** Tesseract's first passes and RapidOCR both read the amount, the destination and the reference, surely and alike. */
+    /** Tesseract's first passes and RapidOCR both read the amount and the destination, surely and alike. */
     private function agreed(TransactionVerification $row, ExtractedFields $fields, ?array $early): bool
     {
         if ($early === null || $early[0] === '') {
@@ -313,14 +279,7 @@ class TransactionVerificationService implements TransactionVerifier
         $expected = $this->expectedDestinations($row);
         $threshold = (float) config('transaction-verification.confidence_threshold');
 
-        // The reference too, where the layout prints one: it finds a receipt reused for another payout, so fewer
-        // passes must not lose it. A layout without one (AlexBank) would otherwise always read every pass for nothing.
-        $keys = $this->matcher->decidingKeys($expected, $fields);
-        if ($fields->format?->printsReference() ?? true) {
-            $keys[] = 'reference';
-        }
-
-        foreach ($keys as $key) {
+        foreach ($this->matcher->decidingKeys($expected, $fields) as $key) {
             $field = $key === 'amount' ? 'amountMinor' : $key;
 
             if ($fields->$field === null || ($fields->confidence[$key] ?? 1.0) < $threshold || $fields->$field !== $early[1]->$field) {
@@ -347,56 +306,13 @@ class TransactionVerificationService implements TransactionVerifier
         return [$text, $second, $this->ms($step)];
     }
 
-    /** A later copy that ran before this row's reference was stored missed it; each one is checked again. */
-    private function recheckLaterCopies(TransactionVerification $row, ?string $referenceHash): void
-    {
-        if ($referenceHash === null) {
-            return;
-        }
-
-        $this->quietly(fn () => $this->recheck($this->duplicates->laterCopies($row, $referenceHash)));
-    }
-
-    /** @param  list<int>  $ids */
-    private function recheck(array $ids): void
-    {
-        foreach ($ids as $id) {
-            $this->quietly(function () use ($id) {
-                // Finished: decided again from its stored reading (no receipt to re-read). One still being checked
-                // decides itself again once its verdict is stored.
-                if ($event = $this->redecide($id)) {
-                    event($event);
-                }
-            });
-        }
-    }
-
-    private function redecide(int $id): ?TransactionVerificationCompleted
-    {
-        return DB::connection(config('transaction-verification.connection'))->transaction(function () use ($id) {
-            $row = TransactionVerification::whereKey($id)->lockForUpdate()->first();
-
-            if ($row?->status !== VerificationStatusEnum::COMPLETED) {
-                return null;
-            }
-
-            $decision = $this->verdictFor($row, ExtractedFields::fromArray($row->extracted ?? []), $row->reference_hash);
-            // Loose: stored checks come back from JSON, so 1.0 may read as 1.
-            $changed = $row->verdict !== $decision['verdict'] || $row->checks != $decision['checks'];
-            $row->update(['verdict' => $decision['verdict'], 'checks' => $decision['checks'], 'confidence' => $decision['confidence']]);
-
-            return $changed ? $this->completedEvent($row, $decision) : null;
-        });
-    }
-
     /** @return array{verdict: VerdictEnum, checks: array<string, array>, confidence: ?float} */
-    private function verdictFor(TransactionVerification $row, ExtractedFields $fields, ?string $referenceHash): array
+    private function verdictFor(TransactionVerification $row, ExtractedFields $fields): array
     {
         $decision = $this->matcher->decide(
             $row->expected_amount_minor,
             $this->expectedDestinations($row),
             $fields,
-            $this->duplicates->find($row, $referenceHash),
             (float) config('transaction-verification.confidence_threshold'),
         );
 
@@ -444,11 +360,6 @@ class TransactionVerificationService implements TransactionVerifier
         return Str::limit(class_basename($e).': '.$e->getMessage(), 250);
     }
 
-    private function blindIndex(string $value): string
-    {
-        return hash_hmac('sha256', $value, (string) (config('transaction-verification.hmac_key') ?: config('app.key')));
-    }
-
     private function toResult(TransactionVerification $row): VerificationResult
     {
         return new VerificationResult(
@@ -458,7 +369,6 @@ class TransactionVerificationService implements TransactionVerifier
             status: $row->status,
             verdict: $row->verdict,
             checks: $row->checks ?? [],
-            duplicateOf: $row->checks[CheckEnum::DUPLICATE->value]['of'] ?? [],
             error: $row->error,
             extracted: ExtractedFields::fromArray($row->extracted ?? [])->masked(),
         );

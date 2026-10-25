@@ -15,7 +15,6 @@ final readonly class VerificationResult
         public VerificationStatusEnum $status,
         public ?VerdictEnum $verdict,
         public array $checks,
-        public array $duplicateOf,
         public ?string $error,
         public array $extracted = [],
     ) {}

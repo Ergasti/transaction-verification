@@ -108,16 +108,16 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame(VerdictEnum::UNREADABLE, $this->verifier()->submit($this->request())->verdict);
     }
 
-    public function test_fallback_a_reference_only_the_second_engine_read_still_catches_a_reused_receipt(): void
+    public function test_fallback_records_a_reference_only_the_second_engine_read(): void
     {
-        $this->reading(self::RECEIPT);
-        $this->verifier()->submit($this->request(subjectId: 1, width: 800));
-
-        // Tesseract lost the phone and the reference; the second engine's reference must reach the duplicate check.
+        // Tesseract lost the phone and the reference; both come from the second engine.
         $this->reading(implode("\f", array_fill(0, 4, "3,070 EGP\nTransfer Amount\nTo Instapay")));
         $this->secondReading('fallback', "3,070 EGP\nTransfer Amount\nTo Instapay\n01000000001\nReference 100000000001");
 
-        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->submit($this->request(subjectId: 2, width: 900))->verdict);
+        $result = $this->verifier()->submit($this->request());
+
+        $this->assertSame(VerdictEnum::MATCH, $result->verdict);
+        $this->assertSame('pass', $result->checks['reference']['outcome']);
     }
 
     public function test_a_mistyped_mode_is_always_never_off(): void
@@ -223,6 +223,19 @@ class SubmitVerificationTest extends TestCase
         Event::assertDispatched(TransactionVerificationCompleted::class, fn ($e) => $e->uuid === $result->uuid && $e->verdict === 'match');
     }
 
+    public function test_the_same_receipt_on_another_payout_is_judged_on_its_own_merits(): void
+    {
+        // 0.6 and earlier called this a 'duplicate'. There is no such verdict now: each receipt is compared with
+        // the amount and the destination it was sent for, and nothing else.
+        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
+
+        $first = $this->verifier()->submit($this->request(subjectId: 1, width: 800));
+        $second = $this->verifier()->submit($this->request(subjectId: 2, width: 900));
+
+        $this->assertSame([VerdictEnum::MATCH, VerdictEnum::MATCH], [$first->verdict, $second->verdict]);
+        $this->assertSame(['amount', 'destination', 'reference'], array_keys($second->checks));
+    }
+
     public function test_submitting_the_same_key_twice_creates_one_row(): void
     {
         $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE));
@@ -234,31 +247,17 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame(1, TransactionVerification::count());
     }
 
-    public function test_the_same_reference_on_another_payout_is_a_duplicate(): void
+    public function test_a_receipt_read_without_its_instapay_words_is_recognised_by_nobody(): void
     {
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
-
-        $first = $this->verifier()->submit($this->request(subjectId: 1, width: 800));
-        $second = $this->verifier()->submit($this->request(subjectId: 2, width: 900));
-
-        $this->assertSame(VerdictEnum::DUPLICATE, $second->verdict);
-        $this->assertSame([$first->uuid], $second->duplicateOf);
-    }
-
-    public function test_a_clean_copy_of_a_receipt_read_without_its_instapay_words_is_a_duplicate(): void
-    {
-        // The original lost "Transfer Amount" on every pass, so nothing recognised it (or AlexBank did, by the sender's
-        // bank, and read nothing): its reference still counts.
+        // "Transfer Amount" lost on every pass, so nothing recognised it -- or AlexBank did, by the sender's bank,
+        // and read nothing off that layout. Either way a person looks.
         foreach (['Transaction Successful', "From\nALEXBANK"] as $subject => $top) {
             $this->reading("{$top}\n3,070 EGP\nTo Mobile Wallet\n".self::PHONE."\nReference 10000000000{$subject}");
-            $first = $this->verifier()->submit($this->request(subjectId: 10 + $subject, width: 800 + $subject));
 
-            $this->reading(str_replace('100000000001', "10000000000{$subject}", self::RECEIPT));
-            $second = $this->verifier()->submit($this->request(subjectId: 20 + $subject, width: 900 + $subject));
+            $result = $this->verifier()->submit($this->request(subjectId: 10 + $subject, width: 800 + $subject));
 
-            $this->assertSame([VerdictEnum::UNREADABLE, VerdictEnum::DUPLICATE], [$first->verdict, $second->verdict], $top);
-            $this->assertSame([$first->uuid], $second->duplicateOf, $top);
-            $this->assertSame('unrecognised', TransactionVerification::where('uuid', $first->uuid)->first()->extracted['format'], $top);
+            $this->assertSame(VerdictEnum::UNREADABLE, $result->verdict, $top);
+            $this->assertSame('unrecognised', TransactionVerification::where('uuid', $result->uuid)->first()->extracted['format'], $top);
         }
     }
 
@@ -308,18 +307,12 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame(VerdictEnum::NEEDS_REVIEW, $result->verdict);
     }
 
-    public function test_the_same_transfer_in_english_and_arabic_is_a_duplicate(): void
+    public function test_a_receipt_from_the_arabic_ui_is_read_and_matched(): void
     {
-        // Fixtures 01 (English UI) and 08 (Arabic UI) are one transfer: different bytes, same reference.
-        $this->reading(self::RECEIPT);
-        $english = $this->verifier()->submit($this->request(subjectId: 1, width: 800));
-
+        // Fixture 08 is the same transfer as 01, screenshotted from the Arabic UI.
         $this->recordedReading('08');
-        $arabic = $this->verifier()->submit($this->request(subjectId: 2, width: 900));
 
-        $this->assertSame(VerdictEnum::MATCH, $english->verdict);
-        $this->assertSame(VerdictEnum::DUPLICATE, $arabic->verdict);
-        $this->assertSame([$english->uuid], $arabic->duplicateOf);
+        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->submit($this->request())->verdict);
     }
 
     public function test_a_receipt_over_the_byte_limit_fails_before_it_is_read(): void
@@ -408,16 +401,6 @@ class SubmitVerificationTest extends TestCase
         $this->assertNull($again->error);
     }
 
-    public function test_blank_references_are_not_duplicates_of_each_other(): void
-    {
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: "  \u{00A0} "));
-
-        $this->verifier()->submit($this->request(subjectId: 1, width: 800));
-        $second = $this->verifier()->submit($this->request(subjectId: 2, width: 900));
-
-        $this->assertSame(VerdictEnum::MATCH, $second->verdict);
-    }
-
     public function test_a_throwing_listener_never_turns_a_stored_verdict_into_failed(): void
     {
         Event::listen(TransactionVerificationCompleted::class, fn () => throw new RuntimeException('listener down'));
@@ -460,23 +443,6 @@ class SubmitVerificationTest extends TestCase
 
         $this->assertSame(VerificationStatusEnum::FAILED, $row->fresh()->status);
         $this->assertSame('Gave up: the check stopped before it finished.', $row->fresh()->error);
-    }
-
-    public function test_a_check_that_died_after_storing_its_reference_still_flags_a_copy_that_finished_first(): void
-    {
-        // The copy finished before the original stored its reference; the original's request then died before it
-        // could re-check later copies.
-        $original = $this->readingRow(subjectId: 1);
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
-        $copy = $this->verifier()->submit($this->request(subjectId: 2));
-        $this->assertSame(VerdictEnum::MATCH, $copy->verdict);
-        $original->update(['reference_hash' => TransactionVerification::where('uuid', $copy->uuid)->value('reference_hash')]);
-
-        $this->travel(16)->minutes();
-        app(TransactionVerificationService::class)->failStale();
-
-        $this->assertSame(VerificationStatusEnum::FAILED, $original->fresh()->status);
-        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy->uuid)->verdict);
     }
 
     public function test_a_database_drop_after_the_verdict_never_throws_at_the_caller(): void
@@ -560,136 +526,6 @@ class SubmitVerificationTest extends TestCase
         $this->assertSame('Gave up: the check stopped before it finished.', $result->error);
     }
 
-    public function test_a_copy_checked_while_the_original_is_read_is_flagged_once_the_original_stores(): void
-    {
-        // The copy arrives in another request while the original is still being read, and finishes first.
-        Event::fake([TransactionVerificationCompleted::class]);
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
-        $engine = $this->duringFirstRead(fn () => $this->verifier()->submit($this->request(subjectId: 2, width: 900)));
-
-        $original = $this->verifier()->submit($this->request(subjectId: 1, width: 800));
-
-        $this->assertSame(VerdictEnum::MATCH, $engine->result->verdict, 'the copy saw no reference yet');
-        $this->assertSame(VerdictEnum::MATCH, $original->verdict);
-        $recheck = $this->verifier()->find($engine->result->uuid);
-        $this->assertSame(VerdictEnum::DUPLICATE, $recheck->verdict);
-        $this->assertSame([$original->uuid], $recheck->duplicateOf);
-        // Listeners see match, then duplicate: the latest event is current.
-        $this->assertSame(['match', 'duplicate'], Event::dispatched(TransactionVerificationCompleted::class, fn ($e) => $e->uuid === $recheck->uuid)->map(fn ($args) => $args[0]->verdict)->values()->all());
-    }
-
-    public function test_an_original_that_finishes_while_a_copy_is_being_checked_still_makes_it_a_duplicate(): void
-    {
-        Event::fake([TransactionVerificationCompleted::class]);
-        // Another request is still reading the original (lower id, no reference yet).
-        $original = $this->readingRow(subjectId: 1);
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
-
-        // The copy has looked up duplicates (none yet); just before its verdict lands, the original stores its reference.
-        $db = DB::connection(config('transaction-verification.connection'));
-        $done = false;
-        $db->beforeExecuting(function (string $sql) use (&$done, $db, $original) {
-            if (! $done && str_contains($sql, '"verdict"')) {
-                $done = true;
-                $copyReference = $db->table('transaction_verifications')->where('id', '!=', $original->id)->value('reference_hash');
-                $db->table('transaction_verifications')->where('id', $original->id)->update(['status' => 'completed', 'reference_hash' => $copyReference]);
-            }
-        });
-
-        $copy = $this->verifier()->submit($this->request(subjectId: 2));
-
-        $this->assertTrue($done);
-        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy->uuid)->verdict);
-        $this->assertSame([$original->uuid], $this->verifier()->find($copy->uuid)->duplicateOf);
-        // One announcement, the re-decided one: listeners never see the copy as a match.
-        $this->assertSame(['duplicate'], Event::dispatched(TransactionVerificationCompleted::class, fn ($e) => $e->uuid === $copy->uuid)->map(fn ($args) => $args[0]->verdict)->values()->all());
-    }
-
-    public function test_a_copy_flagged_by_the_original_between_its_verdict_and_its_own_recheck_ends_on_duplicate(): void
-    {
-        // The original (another request, lower id) is read while the copy is checked here.
-        Event::fake([TransactionVerificationCompleted::class]);
-        $original = $this->readingRow(subjectId: 1);
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
-
-        // The copy has stored 'match'; before it re-decides itself, the original finishes and re-decides the copy.
-        Log::listen(function (MessageLogged $log) use ($original) {
-            if ($log->message === 'transaction-verification.timing' && $log->context['id'] !== $original->id) {
-                $copy = TransactionVerification::find($log->context['id']);
-                $original->update(['status' => VerificationStatusEnum::COMPLETED, 'reference_hash' => $copy->reference_hash]);
-                $service = app(TransactionVerificationService::class);
-                event((new \ReflectionMethod($service, 'redecide'))->invoke($service, $copy->id));
-            }
-        });
-
-        $copy = $this->verifier()->submit($this->request(subjectId: 2));
-
-        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy->uuid)->verdict);
-        // Whatever arrives last is current: never the copy's stale 'match'.
-        $verdicts = Event::dispatched(TransactionVerificationCompleted::class, fn ($e) => $e->uuid === $copy->uuid)->map(fn ($args) => $args[0]->verdict)->values()->all();
-        $this->assertNotContains('match', $verdicts);
-        $this->assertSame('duplicate', end($verdicts));
-    }
-
-    public function test_a_recheck_never_reruns_a_finished_copy(): void
-    {
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
-        $engine = $this->duringFirstRead(fn () => $this->verifier()->submit($this->request(subjectId: 2, width: 900)));
-
-        $original = $this->verifier()->submit($this->request(subjectId: 1, width: 800));
-
-        $recheck = TransactionVerification::where('uuid', $engine->result->uuid)->first();
-        $this->assertSame(2, $engine->reads, 'each receipt read once');
-        $this->assertSame(VerificationStatusEnum::COMPLETED, $recheck->status);
-        $this->assertSame(VerdictEnum::DUPLICATE, $recheck->verdict);
-        $this->assertSame(1, $recheck->attempts);
-        $this->assertSame([$original->uuid], $recheck->checks['duplicate']['of']);
-    }
-
-    public function test_an_original_that_fails_after_reading_still_flags_a_copy_that_ran_first(): void
-    {
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
-        // The original's verdict write, once the copy is done, hits a DB blip.
-        $armed = false;
-        $failed = false;
-        DB::connection(config('transaction-verification.connection'))->beforeExecuting(function (string $sql) use (&$armed, &$failed) {
-            if ($armed && ! $failed && str_contains($sql, '"verdict"')) {
-                $failed = true;
-                throw new RuntimeException('connection blip');
-            }
-        });
-        $engine = $this->duringFirstRead(function () use (&$armed) {
-            $copy = $this->verifier()->submit($this->request(subjectId: 2, width: 900));
-            $armed = true;
-
-            return $copy;
-        });
-
-        $original = $this->verifier()->submit($this->request(subjectId: 1, width: 800));
-
-        $this->assertTrue($failed);
-        $this->assertSame(VerificationStatusEnum::FAILED, $original->status);
-        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($engine->result->uuid)->verdict);
-    }
-
-    public function test_an_original_that_failed_after_reading_still_catches_a_later_copy(): void
-    {
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
-        $failed = false;
-        DB::connection(config('transaction-verification.connection'))->beforeExecuting(function (string $sql) use (&$failed) {
-            if (! $failed && str_contains($sql, '"verdict"')) {
-                $failed = true;
-                throw new RuntimeException('connection blip');
-            }
-        });
-
-        $original = $this->verifier()->submit($this->request(subjectId: 1, width: 800));
-        $copy = $this->verifier()->submit($this->request(subjectId: 2, width: 900));
-
-        $this->assertSame(VerificationStatusEnum::FAILED, $this->verifier()->find($original->uuid)->status);
-        $this->assertSame(VerdictEnum::DUPLICATE, $copy->verdict);
-    }
-
     public function test_a_broken_log_channel_on_the_failure_path_does_not_throw(): void
     {
         Log::shouldReceive('warning')->andThrow(new RuntimeException('log channel down'));
@@ -739,18 +575,6 @@ class SubmitVerificationTest extends TestCase
         $this->assertNotEmpty($logged);
         $this->assertStringNotContainsString(self::PHONE, implode("\n", $logged));
         $this->assertStringContainsString('RuntimeException', implode("\n", $logged));
-    }
-
-    public function test_lookups_use_keyed_hashes(): void
-    {
-        config(['transaction-verification.hmac_key' => 'test-key']);
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: ' 1000 0000 0001 '));
-
-        $this->verifier()->submit($this->request());
-
-        $row = TransactionVerification::first();
-        $this->assertSame(hash_hmac('sha256', 'phone:'.self::PHONE, 'test-key'), $row->expected_destination_hash);
-        $this->assertSame(hash_hmac('sha256', 'ref:100000000001', 'test-key'), $row->reference_hash);
     }
 
     public function test_an_engine_failure_marks_the_row_failed_without_throwing(): void
@@ -868,21 +692,6 @@ class SubmitVerificationTest extends TestCase
         );
     }
 
-    public function test_a_row_from_before_alternatives_is_still_decided_again(): void
-    {
-        $original = $this->readingRow(subjectId: 1);
-        $this->fakeReading(new ExtractedFields(amountMinor: 307000, phone: self::PHONE, reference: '100000000001'));
-        $copy = $this->verifier()->submit($this->request(subjectId: 2));
-        // Stored by 0.4: no alternatives key.
-        TransactionVerification::where('uuid', $copy->uuid)->first()->update(['expected_destination' => ['type' => 'phone', 'value' => self::PHONE]]);
-        $original->update(['reference_hash' => TransactionVerification::where('uuid', $copy->uuid)->value('reference_hash')]);
-
-        $this->travel(16)->minutes();
-        app(TransactionVerificationService::class)->failStale();
-
-        $this->assertSame(VerdictEnum::DUPLICATE, $this->verifier()->find($copy->uuid)->verdict);
-    }
-
     public function test_an_alexbank_confirmation_is_checked_and_its_format_kept(): void
     {
         $this->reading("ALEXBANK\nPAY SOMEONE\nCUSTOMER NAME ACCOUNT\n900000000001 SENDER CO\nBENEFICIARY NAME MOBILE WALLET NUMBER\n"
@@ -922,61 +731,6 @@ class SubmitVerificationTest extends TestCase
         $row->update(['status' => VerificationStatusEnum::PROCESSING]);
 
         return $row;
-    }
-
-    /** A row another request is still reading: lower id, no reference yet. */
-    private function readingRow(int $subjectId): TransactionVerification
-    {
-        return TransactionVerification::create([
-            'uuid' => (string) Str::uuid(),
-            'subject_type' => 'affiliate_payout',
-            'subject_id' => (string) $subjectId,
-            'status' => VerificationStatusEnum::PROCESSING,
-            'attempts' => 1,
-            'expected_amount_minor' => 307000,
-            'currency' => 'EGP',
-            'expected_destination' => ['type' => DestinationTypeEnum::PHONE->value, 'value' => self::PHONE],
-            'expected_destination_hash' => str_repeat('0', 64),
-            'file_mime' => 'image/png',
-            'file_size' => 1,
-            'file_sha256' => str_repeat('a', 64),
-            'idempotency_key' => "reading:{$subjectId}",
-        ]);
-    }
-
-    /** The fake reading's engine, except that its first read runs $during first: another request arriving mid-read. */
-    private function duringFirstRead(callable $during): object
-    {
-        $engine = new class($during) implements OcrEngine
-        {
-            public int $reads = 0;
-
-            public mixed $result = null;
-
-            public function __construct(private $during) {}
-
-            public function read(string $localPath): string
-            {
-                if ($this->reads++ === 0) {
-                    $this->result = ($this->during)();
-                }
-
-                return 'receipt text';
-            }
-
-            public function name(): string
-            {
-                return 'fake';
-            }
-
-            public function version(): string
-            {
-                return '1';
-            }
-        };
-        $this->app->instance(OcrEngine::class, $engine);
-
-        return $engine;
     }
 
     private function verifier(): TransactionVerifier

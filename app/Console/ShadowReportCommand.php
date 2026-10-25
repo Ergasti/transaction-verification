@@ -32,7 +32,7 @@ class ShadowReportCommand extends Command
 
         $since = $sinceOption === null ? now()->subDays(self::DEFAULT_DAYS) : Carbon::createFromFormat('!Y-m-d', $sinceOption);
 
-        $checks = [CheckEnum::AMOUNT->value, CheckEnum::DESTINATION->value, CheckEnum::DUPLICATE->value];
+        $checks = [CheckEnum::AMOUNT->value, CheckEnum::DESTINATION->value];
 
         // format: which layout read it (instapay, alexbank, unrecognised), so the gate is measured per format.
         $this->csv(['uuid', 'subject_id', 'created_at', 'status', 'verdict', 'format', 'confidence', ...$checks, 'label']);

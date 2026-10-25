@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.0
+
+**Breaking.** Duplicate detection is removed. The checker compares a receipt with the amount and the destination;
+whether a receipt was used twice is no longer its business.
+
+- Gone: the `duplicate` verdict and the `duplicate` check, `VerdictEnum::DUPLICATE`, `CheckEnum::DUPLICATE`,
+  `VerificationResult::$duplicateOf`, the API's `duplicate_of` field, the shadow report's `duplicate` column,
+  `DuplicateDetector`, `TransactionVerificationDuplicate`, the `transaction_verification_duplicates` table, and the
+  three blind-index columns `reference_hash`, `expected_destination_hash` and `file_sha256`. With them goes
+  `hmac_key` / `TRANSACTION_VERIFICATION_HMAC_KEY`, which existed only to key those columns, so **no install needs a
+  secret of its own any more**.
+- **Upgrading from 0.5.x or 0.6.0:** stop reading `duplicate_of`, and remove the `duplicate` arm from any `match`
+  on a verdict -- a `match(true)` that still lists it is fine, but one matching `VerdictEnum` cases exhaustively
+  throws `UnhandledMatchError` on the enum it no longer has. Delete `TRANSACTION_VERIFICATION_HMAC_KEY` from `.env`.
+  No other verdict changes: a receipt that used to come back `duplicate` now comes back on its own merits -- `match`
+  when the amount and the destination are right, and whatever the remaining rules say when they are not.
+- The transfer reference is still read and still recorded as a check; it was never part of the verdict and still
+  isn't. Nothing hashes it.
+- **No drop migration.** The create migrations simply no longer make the table or the columns: this package's
+  migrations had never been run anywhere, so there was no deployed schema to reconcile and a create-then-drop pair
+  would be archaeology. An app that *had* run 0.5.x keeps the orphaned table and columns until it drops them itself.
+- `recheck()`, `recheckLaterCopies()` and `redecide()` are gone, and the scheduled sweep no longer re-checks copies
+  of a receipt after giving up on a check: it only marks the dead check failed.
+- **On `always`, two agreeing passes now end the read for every layout.** Tesseract's first passes and RapidOCR had
+  to agree on the transfer reference too, which existed solely so a receipt reused for another payout couldn't slip
+  through; with that gone, every InstaPay receipt stopped after four passes for nothing. AlexBank already stopped at
+  two (it prints no reference), so `ReceiptFormatEnum::printsReference()` goes as well.
+
 ## 0.6.0
 
 - **No `.env` entry is required any more.** `enabled` defaults to **true** -- an app that required this package

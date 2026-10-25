@@ -7,6 +7,5 @@ enum CheckEnum: string
 {
     case AMOUNT = 'amount';
     case DESTINATION = 'destination';
-    case DUPLICATE = 'duplicate';
     case REFERENCE = 'reference';
 }

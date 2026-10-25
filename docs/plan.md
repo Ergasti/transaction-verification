@@ -4,6 +4,11 @@ The design document, written while the checker was built inside surgeflo-whareho
 
 Paths below that start with `Modules/TransactionVerification/` are where it was built; here they are relative to the repo root. Paths like `Modules/Affiliate/…`, `Dockerfile` or `docker-compose.yml` are in surgeflo-wharehouse, the first app to use it (it requires `^0.4` and sets `TRANSACTION_VERIFICATION_DB_CONNECTION=portal` in its `.env.example`).
 
+**Since 0.7.0 there is no duplicate detection:** the `duplicate` verdict and check, `DuplicateDetector`, the
+`transaction_verification_duplicates` table and the `reference_hash` / `expected_destination_hash` / `file_sha256`
+blind indexes are gone, with `hmac_key` that keyed them. The parts below that describe them (the duplicate check in
+§1, the schema in §6, rules 9 and 11 of §7, and `DuplicateDetector` in §9 and §10) describe 0.1-0.6.
+
 **Since 0.2.0 the receipt is never stored by the checker:** `submit()` checks it in the request, from the upload, after Affiliate's response. The parts below about the receipt disk (`hetzner_receipts`), the queue job and the `ocr` worker, `reprocess`, the receipt link and the stored OCR text describe 0.1 and are gone; §11 Q7 (how long receipts are kept) no longer applies.
 
 ## 1. Goal

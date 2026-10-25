@@ -10,14 +10,10 @@ return [
     // read it may disagree; on 'always' the second engine must also read it the same, or it drops to 0.
     'confidence_threshold' => (float) env('TRANSACTION_VERIFICATION_CONFIDENCE', 0.90),
 
-    // Blind-index key, resolved here so it is never blank in an app that has APP_KEY. Changing it orphans
-    // every stored hash: once rows exist, do not set a dedicated key and do not rotate APP_KEY.
-    'hmac_key' => env('TRANSACTION_VERIFICATION_HMAC_KEY') ?: env('APP_KEY'),
-
-    // Database connection for the receipt tables; unset = the app's default connection.
+    // Database connection for the receipt table; unset = the app's default connection.
     'connection' => env('TRANSACTION_VERIFICATION_DB_CONNECTION'),
 
-    // 'tesseract' needs the binaries (the Docker image has them); 'null' reads nothing, for a box without them.
+    // 'tesseract' needs the host's tesseract and poppler (install-ocr names a missing one); 'null' reads nothing.
     'engine' => env('TRANSACTION_VERIFICATION_ENGINE', 'tesseract'),
 
     // The ReceiptParser that reads OCR text into fields. Another app can plug in its own class.
@@ -44,7 +40,7 @@ return [
         // Passes read side by side, each on one core: 4 reads a receipt in about one pass's time. 1 = one after another.
         'parallel' => (int) env('TRANSACTION_VERIFICATION_TESSERACT_PARALLEL', 4),
         // On second_engine 'always': read the first this-many passes, and the rest only if they and RapidOCR don't
-        // agree on the amount, destination and reference. 0 = always every pass.
+        // agree on the amount and the destination. 0 = always every pass.
         'early_passes' => (int) env('TRANSACTION_VERIFICATION_TESSERACT_EARLY_PASSES', 2),
     ],
 

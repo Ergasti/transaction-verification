@@ -25,7 +25,7 @@ class ReceiptRouter implements ReceiptParser
         }
 
         // The reference still, as the first parser to find one reads it (InstaPay's goes by shape when its labels are
-        // lost): a later clean copy of this receipt, sent for another payout, is then caught as a duplicate.
+        // lost): the verdict is 'unreadable' either way, but the person who looks at the receipt gets its number.
         foreach ($this->parsers() as $parser) {
             $read = $parser->parse($text);
 

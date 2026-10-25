@@ -29,18 +29,17 @@ Laravel finds the service provider by itself.
 
 **2. Settings** (`.env`):
 
-The package keeps its two tables on the database connection you name (defined in your app's
+The package keeps its table on the database connection you name (defined in your app's
 `config/database.php`), so it works with any database. It needs no disk or bucket: the receipt is never stored.
 
 | Variable | Default | Set it to |
 |---|---|---|
 | `TRANSACTION_VERIFICATION_DB_CONNECTION` | the app's default | Another connection, if the tables live elsewhere |
-| `TRANSACTION_VERIFICATION_HMAC_KEY` | `APP_KEY` | A long random secret. It keys the blind index of receipt numbers and destinations: **never change it** once rows exist, or duplicates stop being found |
 | `TRANSACTION_VERIFICATION_RAPIDOCR_BINARY` | where `install-ocr` puts it | Another path to the RapidOCR binary. Not normally set |
 | `TRANSACTION_VERIFICATION_RAPIDOCR_URL` | none | Only used when no binary is installed: a RapidOCR HTTP endpoint instead |
 | `TRANSACTION_VERIFICATION_ENABLED` | `true` | `false` to switch the package off. Only read by callers that check it |
 
-**Nothing in that table is required.** An app with an `APP_KEY` can install this package, migrate, run `install-ocr`
+**Nothing in that table is required.** An app can install this package, migrate, run `install-ocr`
 and submit a receipt without touching `.env` at all. The one thing to decide *before* the first `migrate` is the
 connection, below.
 
@@ -107,7 +106,7 @@ A router reads each receipt with the first parser that recognises it, and record
 |---|---|---|
 | `instapay` | InstaPay app, English or Arabic, old and new layout | Recognised by its "Transfer Amount" (المحول) label or an `@instapay` address, unless the text has AlexBank's labels (a sender can type either into AlexBank's description) |
 | `alexbank` | AlexBank "Pay someone" confirmation (A4 export) | Recognised by "ALEXBANK", "PAY SOMEONE", "BENEFICIARY NAME" or "MOBILE WALLET NUMBER". Several confirmations stacked in one image (a split payout) are added up, and each must name the same wallet. It has no reference number |
-| `unrecognised` | Anything else | Nothing is read but a reference-shaped number (so a later copy is still a `duplicate`), so it comes back `unreadable` and a person looks |
+| `unrecognised` | Anything else | Nothing is read but a reference-shaped number, so it comes back `unreadable` and a person looks |
 
 Any one signal is enough, so a renamed label doesn't lose a format. A layout that changes more falls to
 `unrecognised`, which the shadow report shows. A tall stack of confirmations reads less well on the second engine
@@ -125,7 +124,6 @@ The first rule that applies wins:
 
 | Verdict | Meaning |
 |---|---|
-| `duplicate` | The same receipt (file or reference number) was already submitted for another subject |
 | `unreadable` | The amount or the destination could not be read at all, even if everything else was |
 | `mismatch` | The amount or the destination was read surely and is different from what was expected |
 | `needs_review` | Both match, but the destination can't be confirmed (e.g. a handle was expected and only a phone is shown, or a bank account's digits differ) or a deciding field is unsure, including one that differs but the two engines read differently; a person decides |
@@ -158,10 +156,8 @@ receipt that shows only that phone is still right. Send the account as `expected
 alternative. The best outcome decides: a match on any of them beats a phone that differs, and a phone that differs
 beats a missing account number.
 
-`TransactionVerificationCompleted` (uuid, subject, verdict, checks; never a phone) fires each time a check stores
-a verdict, and again for another subject's receipt that becomes a `duplicate` because its original was checked later.
-Events are notifications: before acting on one, read the current result with `find(uuid)` (two checks running at once
-can, rarely, deliver an older verdict last).
+`TransactionVerificationCompleted` (uuid, subject, verdict, checks; never a phone) fires once a check stores its
+verdict. Events are notifications: before acting on one, read the current result with `find(uuid)`.
 
 ## Example caller: payouts
 

@@ -88,7 +88,7 @@ class ResultAndReportTest extends TestCase
         $output = Artisan::output();
         $lines = array_map('str_getcsv', explode("\n", trim($output)));
 
-        $this->assertSame(['uuid', 'subject_id', 'created_at', 'status', 'verdict', 'format', 'confidence', 'amount', 'destination', 'duplicate', 'label'], $lines[0]);
+        $this->assertSame(['uuid', 'subject_id', 'created_at', 'status', 'verdict', 'format', 'confidence', 'amount', 'destination', 'label'], $lines[0]);
         $this->assertCount(2, $lines);
         $row = array_combine($lines[0], $lines[1]);
         $this->assertSame($recent, $row['uuid']);
@@ -259,31 +259,6 @@ class ResultAndReportTest extends TestCase
         $this->assertSame(VerdictEnum::NEEDS_REVIEW, $this->verifier()->submit($this->request())->verdict);
         $all = config('transaction-verification.tesseract.passes');
         $this->assertSame([array_slice($all, 0, 2), array_slice($all, 2)], $tesseract->reads);
-    }
-
-    public function test_a_reference_the_first_passes_missed_means_reading_them_all(): void
-    {
-        // Both engines agree on the amount and phone, but without a reference a reused receipt could slip through.
-        $receipt = "3,070 EGP\nTransfer Amount\nTo Instapay\n01000000001";
-        $tesseract = $this->tesseractReading($receipt);
-        config(['transaction-verification.second_engine' => ['mode' => 'always', 'url' => 'http://ocr.test', 'timeout' => 5]]);
-        Http::fake(['ocr.test/read' => Http::response(['lines' => explode("\n", $receipt), 'version' => 'rapidocr test'])]);
-
-        $this->verifier()->submit($this->request());
-
-        $this->assertCount(2, $tesseract->reads);
-    }
-
-    public function test_a_layout_without_a_reference_needs_only_two_agreeing_passes(): void
-    {
-        // AlexBank prints no reference, so waiting for one would read every pass for nothing.
-        $receipt = "ALEXBANK\nOBJECT\nPAY SOMEONE\nBENEFICIARY NAME\nMOBILE WALLET NUMBER\n00201000000001\nAMOUNT\nFEE\n3,070.00 EGP\n100.00 EGP\nEXECUTION DATE\n17/02/2025";
-        $tesseract = $this->tesseractReading($receipt);
-        config(['transaction-verification.second_engine' => ['mode' => 'always', 'url' => 'http://ocr.test', 'timeout' => 5]]);
-        Http::fake(['ocr.test/read' => Http::response(['lines' => explode("\n", $receipt), 'version' => 'rapidocr test'])]);
-
-        $this->assertSame(VerdictEnum::MATCH, $this->verifier()->submit($this->request())->verdict);
-        $this->assertSame([array_slice(config('transaction-verification.tesseract.passes'), 0, 2)], $tesseract->reads);
     }
 
     public function test_early_passes_zero_reads_every_pass_at_once(): void

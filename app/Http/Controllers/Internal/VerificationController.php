@@ -24,7 +24,7 @@ class VerificationController
     // Response shapes for the spec: inference alone types the keyed maps (checks, extracted) as lists.
     private const ERR = 'array{success: bool, error: string, message: string}';
 
-    private const ITEM = 'array{uuid: string, subject_type: string, subject_id: string, status: string, verdict: string|null, checks: array<string, array<string, mixed>>, duplicate_of: list<string>, extracted: array<string, string|int|null>, error: string|null}';
+    private const ITEM = 'array{uuid: string, subject_type: string, subject_id: string, status: string, verdict: string|null, checks: array<string, array<string, mixed>>, extracted: array<string, string|int|null>, error: string|null}';
 
     private const ONE = 'array{success: bool, data: '.self::ITEM.'}';
 
@@ -175,7 +175,6 @@ class VerificationController
             'status' => $result->status->value,
             'verdict' => $result->verdict?->value,
             'checks' => (object) $result->checks,
-            'duplicate_of' => $result->duplicateOf,
             'extracted' => (object) $result->extracted,
             // The stored error can quote any exception (SQL included); the detail stays in the row.
             'error' => $result->error === null ? null : 'The receipt could not be read. Check it by hand.',
