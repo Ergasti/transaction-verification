@@ -45,7 +45,7 @@ class InternalApiTest extends TestCase
         Http::preventStrayRequests();
     }
 
-    public function test_a_signed_caller_reads_a_verification_with_the_phone_masked(): void
+    public function test_a_signed_caller_reads_a_verification(): void
     {
         $this->reading(self::RECEIPT);
         $uuid = $this->submitted()->uuid;
@@ -58,8 +58,7 @@ class InternalApiTest extends TestCase
             ->assertJsonPath('data.status', 'completed')
             ->assertJsonPath('data.verdict', 'match')
             ->assertJsonPath('data.checks.amount.outcome', 'pass')
-            ->assertJsonPath('data.extracted.phone', '********001');
-        $this->assertStringNotContainsString('01000000001', $response->getContent());
+            ->assertJsonPath('data.extracted.phone', '01000000001');
     }
 
     public function test_a_caller_submits_a_receipt_as_signed_json(): void

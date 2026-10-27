@@ -5,7 +5,7 @@ namespace Modules\TransactionVerification\Data;
 use Modules\TransactionVerification\Enums\VerdictEnum;
 use Modules\TransactionVerification\Enums\VerificationStatusEnum;
 
-/** The public read model of a verification. $checks is keyed by check name; $extracted is what was read, masked. */
+/** The public read model of a verification. $checks is keyed by check name; $extracted is what was read. */
 final readonly class VerificationResult
 {
     public function __construct(

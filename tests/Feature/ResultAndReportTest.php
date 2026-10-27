@@ -44,37 +44,36 @@ class ResultAndReportTest extends TestCase
         Http::preventStrayRequests();
     }
 
-    public function test_a_result_shows_what_was_read_with_the_phone_masked(): void
+    public function test_a_result_shows_what_was_read(): void
     {
         $this->reading(self::RECEIPT);
 
         $result = $this->verifier()->find($this->verifier()->submit($this->request())->uuid);
 
         $this->assertSame(307000, $result->extracted['amount_minor']);
-        $this->assertSame('********001', $result->extracted['phone']);
+        $this->assertSame('01000000001', $result->extracted['phone']);
         $this->assertSame('100000000001', $result->extracted['reference']);
-        $this->assertStringNotContainsString('01000000001', json_encode($result));
     }
 
-    public function test_a_result_shows_only_the_ends_of_a_handle_and_an_account(): void
+    public function test_a_result_shows_a_handle_and_an_account_in_full(): void
     {
         $this->parsed(new ExtractedFields(handle: 'someone@instapay', account: '1000000000000000010', note: 'rent'));
 
         $extracted = $this->verifier()->submit($this->request())->extracted;
 
-        $this->assertSame('so***@instapay', $extracted['handle']);
-        $this->assertSame('****0010', $extracted['account']);
+        $this->assertSame('someone@instapay', $extracted['handle']);
+        $this->assertSame('1000000000000000010', $extracted['account']);
         // Free text can hold anything a person typed.
         $this->assertArrayNotHasKey('note', $extracted);
     }
 
-    public function test_a_value_too_short_to_hide_a_part_of_is_masked_whole(): void
+    public function test_a_short_value_is_shown_as_read(): void
     {
         $this->parsed(new ExtractedFields(phone: '01234', handle: 'ab@instapay', account: '1234567'));
 
         $extracted = $this->verifier()->submit($this->request())->extracted;
 
-        $this->assertSame(['*****', '***@instapay', '****'], [$extracted['phone'], $extracted['handle'], $extracted['account']]);
+        $this->assertSame(['01234', 'ab@instapay', '1234567'], [$extracted['phone'], $extracted['handle'], $extracted['account']]);
     }
 
     public function test_the_shadow_report_lists_recent_payout_checks_and_no_personal_values(): void

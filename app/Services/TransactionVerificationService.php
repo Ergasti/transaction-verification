@@ -370,7 +370,7 @@ class TransactionVerificationService implements TransactionVerifier
             verdict: $row->verdict,
             checks: $row->checks ?? [],
             error: $row->error,
-            extracted: ExtractedFields::fromArray($row->extracted ?? [])->masked(),
+            extracted: ExtractedFields::fromArray($row->extracted ?? [])->revealed(),
         );
     }
 }

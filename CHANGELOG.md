@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.2
+
+What a read returns is no longer masked. `ExtractedFields::masked()` becomes `revealed()` and hands back the
+amount, phone, InstaPay handle, bank account, reference, time and format as the engines read them, instead of
+`********001` / `****4204`. The free text (`note`, `status_text`) and the per-field scores stay out of it, as
+before.
+
+- The values were always stored in full, encrypted at rest (`extracted` is an `encrypted:array` cast, and the
+  column is `$hidden`); masking only ever happened on the way out, in `toResult()`. So nothing needs re-reading:
+  rows written by earlier versions now read back in full too.
+- Every read path shares `toResult()`, so this also applies to the internal HTTP API (`api.enabled`, off by
+  default). A caller that relied on receiving masked values will now receive whole numbers.
+- **Upgrading:** rename any call to `masked()`. If you need the old behaviour at a boundary, mask at that
+  boundary -- the package no longer does it for you.
+
+
 ## 0.7.1
 
 Tests only; the package behaves exactly as `0.7.0`. The `0.7.0` work left an Arabic-UI test asserting a verdict

@@ -64,7 +64,7 @@ class ExtractedFieldsTest extends TestCase
         $fields = new ExtractedFields(amountMinor: 307000, format: ReceiptFormatEnum::ALEXBANK);
 
         $this->assertSame(ReceiptFormatEnum::ALEXBANK, ExtractedFields::fromArray($fields->toArray())->format);
-        $this->assertSame('alexbank', $fields->masked()['format']);
+        $this->assertSame('alexbank', $fields->revealed()['format']);
         $this->assertNull(ExtractedFields::fromArray(['amount_minor' => 307000])->format);
     }
 

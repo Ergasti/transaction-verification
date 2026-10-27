@@ -142,7 +142,7 @@ class VerificationController
         ]]);
     }
 
-    /** One verification: status, verdict, checks and what was read (masked). */
+    /** One verification: status, verdict, checks and what was read. */
     #[ResponseDoc(status: 200, type: self::ONE, description: 'The verification.')]
     #[ResponseDoc(status: 401, type: self::ERR, description: 'Missing, wrong, expired or reused signature.')]
     #[ResponseDoc(status: 403, type: self::ERR, description: 'Caller IP not allowed.')]

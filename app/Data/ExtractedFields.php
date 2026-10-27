@@ -99,20 +99,15 @@ final readonly class ExtractedFields
         );
     }
 
-    /** For callers: the phone, handle and account are masked; the free text (note, status) is left out. */
-    public function masked(): array
+    /** For callers: the values as they were read; the free text (note, status) and the per-field scores are left out. */
+    public function revealed(): array
     {
-        // A part is shown only when at least as much stays hidden: a short value is masked whole.
-        $shown = fn (string $value, int $keep) => mb_strlen($value) >= 2 * $keep;
-        $tail = fn (string $value, int $keep) => $shown($value, $keep) ? mb_substr($value, -$keep) : '';
-        [$name, $domain] = array_pad(explode('@', (string) $this->handle, 2), 2, null);
-
         return [
             'amount_minor' => $this->amountMinor,
             'currency' => $this->currency,
-            'phone' => $this->phone === null ? null : str_repeat('*', mb_strlen($this->phone) - mb_strlen($tail($this->phone, 3))).$tail($this->phone, 3),
-            'handle' => $this->handle === null ? null : ($shown($name, 2) ? mb_substr($name, 0, 2) : '').'***'.($domain === null ? '' : '@'.$domain),
-            'account' => $this->account === null ? null : '****'.$tail($this->account, 4),
+            'phone' => $this->phone,
+            'handle' => $this->handle,
+            'account' => $this->account,
             'reference' => $this->reference,
             'occurred_at' => $this->occurredAt,
             'format' => $this->format?->value,
