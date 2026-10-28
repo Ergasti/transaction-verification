@@ -15,7 +15,7 @@ class ShadowReportCommand extends Command
 
     protected $signature = 'transaction-verification:shadow-report
         {--since= : Y-m-d, default '.self::DEFAULT_DAYS.' days ago}
-        {--subject-type=affiliate_payout : The subject_type the caller submits, e.g. payout_transaction}';
+        {--subject-type= : Only this subject_type, e.g. affiliate_payout; default every subject_type}';
 
     protected $description = 'List payout receipt checks as CSV, with an empty label column.';
 
@@ -35,16 +35,19 @@ class ShadowReportCommand extends Command
         $checks = [CheckEnum::AMOUNT->value, CheckEnum::DESTINATION->value];
 
         // format: which layout read it (instapay, alexbank, unrecognised), so the gate is measured per format.
-        $this->csv(['uuid', 'subject_id', 'created_at', 'status', 'verdict', 'format', 'confidence', ...$checks, 'label']);
+        $this->csv(['uuid', 'subject_id', 'subject_type', 'created_at', 'status', 'verdict', 'format', 'confidence', ...$checks, 'label']);
 
         // Only what the report prints, in batches.
-        $rows = TransactionVerification::where('subject_type', (string) $this->option('subject-type'))->where('created_at', '>=', $since->startOfDay())
-            ->select(['id', 'uuid', 'subject_id', 'created_at', 'status', 'verdict', 'confidence', 'checks', 'extracted']);
+        $rows = TransactionVerification::query()
+            ->when((string) $this->option('subject-type'), fn ($query, string $type) => $query->where('subject_type', $type))
+            ->where('created_at', '>=', $since->startOfDay())
+            ->select(['id', 'uuid', 'subject_id', 'subject_type', 'created_at', 'status', 'verdict', 'confidence', 'checks', 'extracted']);
 
         foreach ($rows->lazyById(500) as $row) {
             $this->csv([
                 $row->uuid,
                 $row->subject_id,
+                $row->subject_type,
                 $row->created_at?->toDateTimeString(),
                 $row->status->value,
                 $row->verdict?->value,

@@ -87,7 +87,7 @@ class ResultAndReportTest extends TestCase
         $output = Artisan::output();
         $lines = array_map('str_getcsv', explode("\n", trim($output)));
 
-        $this->assertSame(['uuid', 'subject_id', 'created_at', 'status', 'verdict', 'format', 'confidence', 'amount', 'destination', 'label'], $lines[0]);
+        $this->assertSame(['uuid', 'subject_id', 'subject_type', 'created_at', 'status', 'verdict', 'format', 'confidence', 'amount', 'destination', 'label'], $lines[0]);
         $this->assertCount(2, $lines);
         $row = array_combine($lines[0], $lines[1]);
         $this->assertSame($recent, $row['uuid']);
@@ -95,7 +95,7 @@ class ResultAndReportTest extends TestCase
         $this->assertStringNotContainsString('01000000001', $output);
     }
 
-    public function test_the_shadow_report_leaves_out_other_subjects_and_defuses_spreadsheet_formulas(): void
+    public function test_the_shadow_report_leaves_out_other_subject_types_when_asked_and_defuses_spreadsheet_formulas(): void
     {
         $this->reading(self::RECEIPT);
         $other = $this->verifier()->submit(new VerificationRequest(
@@ -110,7 +110,7 @@ class ResultAndReportTest extends TestCase
             file: UploadedFile::fake()->image('receipt.png', 701, 1600), idempotencyKey: 'formula',
         ))->uuid;
 
-        Artisan::call('transaction-verification:shadow-report');
+        Artisan::call('transaction-verification:shadow-report', ['--subject-type' => 'affiliate_payout']);
         $output = Artisan::output();
         $lines = array_map('str_getcsv', explode("\n", trim($output)));
 
@@ -135,6 +135,23 @@ class ResultAndReportTest extends TestCase
 
         $this->assertCount(2, $lines);
         $this->assertSame([$other, 'SRT-1'], array_slice($lines[1], 0, 2));
+    }
+
+    public function test_the_shadow_report_lists_every_subject_type_by_default(): void
+    {
+        $this->reading(self::RECEIPT);
+        $payout = $this->verifier()->submit($this->request('payout', 1))->uuid;
+        $other = $this->verifier()->submit(new VerificationRequest(
+            subjectType: 'transaction', subjectId: 9, expectedAmountMinor: 307000,
+            expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, '01000000001'),
+            file: UploadedFile::fake()->image('receipt.png', 703, 1600), idempotencyKey: 'transaction:9',
+        ))->uuid;
+
+        Artisan::call('transaction-verification:shadow-report');
+        $lines = array_map('str_getcsv', explode("\n", trim(Artisan::output())));
+        $types = array_column(array_map(fn (array $line) => array_combine($lines[0], $line), array_slice($lines, 1)), 'subject_type', 'uuid');
+
+        $this->assertSame([$payout => 'affiliate_payout', $other => 'transaction'], $types);
     }
 
     public function test_the_shadow_report_defuses_full_width_and_line_feed_formula_prefixes(): void

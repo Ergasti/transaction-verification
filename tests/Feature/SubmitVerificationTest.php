@@ -86,6 +86,29 @@ class SubmitVerificationTest extends TestCase
         }
     }
 
+    public function test_each_engine_s_own_reading_is_kept_apart_from_the_combined_one(): void
+    {
+        $this->reading(self::RECEIPT);
+        $this->secondReading('always', "3,080 EGP\nTransfer Amount\nTo Instapay\n01000000001");
+
+        $row = TransactionVerification::where('uuid', $this->verifier()->submit($this->request())->uuid)->first();
+
+        $this->assertSame(307000, $row->first_read['amount_minor']);
+        $this->assertSame(308000, $row->second_read['amount_minor']);
+        $this->assertSame('01000000001', $row->second_read['phone']);
+    }
+
+    public function test_no_second_reading_is_kept_when_the_second_engine_is_not_asked(): void
+    {
+        $this->reading(self::RECEIPT);
+        config(['transaction-verification.second_engine.mode' => 'off']);
+
+        $row = TransactionVerification::where('uuid', $this->verifier()->submit($this->request())->uuid)->first();
+
+        $this->assertSame(307000, $row->first_read['amount_minor']);
+        $this->assertNull($row->second_read);
+    }
+
     public function test_always_a_second_engine_that_is_down_sends_the_match_to_a_person_and_never_fails_the_row(): void
     {
         Log::spy();
@@ -609,13 +632,18 @@ class SubmitVerificationTest extends TestCase
         $this->assertStringNotContainsString(self::PHONE, (string) $raw->expected_destination);
         $this->assertStringNotContainsString(self::PHONE, (string) $raw->extracted);
         $this->assertStringNotContainsString(self::PHONE, (string) $raw->checks);
-        // What the engines read is used, never kept.
+        $this->assertStringNotContainsString(self::PHONE, (string) $raw->first_read);
+        $this->assertStringNotContainsString(self::PHONE, (string) $raw->second_read);
+        $this->assertNotNull($raw->second_read);
+        // The engines' raw text is used, never kept: only the fields read off it.
         $this->assertObjectNotHasProperty('ocr_text', $raw);
         $this->assertObjectNotHasProperty('second_ocr_text', $raw);
 
         $array = TransactionVerification::first()->toArray();
         $this->assertArrayNotHasKey('expected_destination', $array);
         $this->assertArrayNotHasKey('extracted', $array);
+        $this->assertArrayNotHasKey('first_read', $array);
+        $this->assertArrayNotHasKey('second_read', $array);
     }
 
     public function test_the_check_writes_nothing_to_any_disk(): void

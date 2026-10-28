@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * One row per submitted receipt. Kept forever (no soft delete, no pruning).
- * The destination and extracted fields are encrypted by the model.
+ * The destination and the fields read are encrypted by the model.
  */
 return new class extends Migration
 {
@@ -38,15 +38,14 @@ return new class extends Migration
             $table->bigInteger('expected_amount_minor');
             $table->char('currency', 3);
             $table->text('expected_destination');
-            $table->string('file_disk', 32);
-            $table->string('file_path');
             $table->string('file_mime', 100);
             $table->unsignedInteger('file_size');
             $table->string('engine', 32)->nullable();
             $table->string('engine_version', 64)->nullable();
-            $table->longText('ocr_text')->nullable();
-            $table->longText('second_ocr_text')->nullable();
             $table->text('extracted')->nullable();
+            // Each engine's own reading, before they are combined into extracted (null: that engine was not asked).
+            $table->text('first_read')->nullable();
+            $table->text('second_read')->nullable();
             $table->json('checks')->nullable();
             $table->decimal('confidence', 4, 3)->nullable();
             $table->string('error')->nullable();

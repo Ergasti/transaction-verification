@@ -20,6 +20,8 @@ class TransactionVerification extends Model
         // Personal data: the recipient's phone/handle and the fields read off the screenshot.
         'expected_destination' => 'encrypted:array',
         'extracted' => 'encrypted:array',
+        'first_read' => 'encrypted:array',
+        'second_read' => 'encrypted:array',
         'checks' => 'array',
         'context' => 'array',
         'confidence' => 'decimal:3',
@@ -27,7 +29,7 @@ class TransactionVerification extends Model
     ];
 
     // Encrypted casts protect the column at rest, not toArray()/JSON output.
-    protected $hidden = ['expected_destination', 'extracted'];
+    protected $hidden = ['expected_destination', 'extracted', 'first_read', 'second_read'];
 
     // The property, not getConnectionName(): Eloquent also reads it directly. setConnection()/on() still win.
     public function __construct(array $attributes = [])

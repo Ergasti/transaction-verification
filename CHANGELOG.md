@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.0
+
+**Breaking.** One migration instead of two, each engine's reading kept, and the shadow report lists every caller.
+
+- The create migration builds the table in its final shape, and the migration that dropped `file_disk`,
+  `file_path`, `ocr_text` and `second_ocr_text` is gone. **Upgrading:** only for a database that has never run this
+  package's migrations. One that has keeps a stale `2026_10_07_100000_drop_stored_receipt_columns...` row in
+  `migrations` (harmless) and lacks the new columns below: drop `transaction_verifications` and migrate again.
+- New `first_read` and `second_read` columns keep what each engine read (the fields, never the raw text), before
+  they are combined into `extracted`. `second_read` is null when the second engine was not asked. Encrypted at rest
+  and `$hidden`, like `extracted`.
+- `shadow-report` lists every `subject_type` by default (was `affiliate_payout` only) and prints a `subject_type`
+  column after `subject_id`. Pass `--subject-type=affiliate_payout` for the old output.
+
 ## 0.7.2
 
 What a read returns is no longer masked. `ExtractedFields::masked()` becomes `revealed()` and hands back the

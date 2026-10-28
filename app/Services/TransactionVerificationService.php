@@ -146,7 +146,8 @@ class TransactionVerificationService implements TransactionVerifier
             $step = hrtime(true);
             [$text, $fields, $early, $passes] = $this->firstRead($path, $row);
             $timing = ['first_ms' => $this->ms($step)];
-            [$fields, $secondText, $secondMs] = $this->secondRead($path, $row, $fields, $early);
+            $firstRead = $fields;
+            [$fields, $secondText, $secondMs, $secondRead] = $this->secondRead($path, $row, $fields, $early);
             $timing['second_ms'] = $secondText === null ? null : $secondMs;
             $timing['passes'] = $passes;
 
@@ -157,7 +158,7 @@ class TransactionVerificationService implements TransactionVerifier
                 ? [$this->engine->name(), $this->engine->version()]
                 : [$this->engine->name().'+'.$this->secondEngine->name(), Str::limit($this->engine->version().' + '.$this->secondEngine->version(), 60)];
 
-            $stored = DB::connection(config('transaction-verification.connection'))->transaction(function () use ($id, $attempt, $decision, $fields, $engineName, $engineVersion) {
+            $stored = DB::connection(config('transaction-verification.connection'))->transaction(function () use ($id, $attempt, $decision, $fields, $firstRead, $secondRead, $engineName, $engineVersion) {
                 $current = TransactionVerification::whereKey($id)->lockForUpdate()->first();
 
                 // The sweep gave up on it meanwhile: failed stays failed.
@@ -171,6 +172,8 @@ class TransactionVerificationService implements TransactionVerifier
                     'checks' => $decision['checks'],
                     'confidence' => $decision['confidence'],
                     'extracted' => $fields->toArray(),
+                    'first_read' => $firstRead->toArray(),
+                    'second_read' => $secondRead?->toArray(),
                     'engine' => $engineName,
                     'engine_version' => $engineVersion,
                     'processed_at' => now(),
@@ -201,8 +204,8 @@ class TransactionVerificationService implements TransactionVerifier
      * nothing, so on 'always' every deciding field drops to 0 and a match waits for a person.
      *
      * @param  ?array{string, ExtractedFields, int}  $early  askSecond()'s result if it already read alongside Tesseract
-     * @return array{ExtractedFields, ?string, int} the fields to decide on, the second engine's text (null: not asked)
-     *                                              and how long it took
+     * @return array{ExtractedFields, ?string, int, ?ExtractedFields} the fields to decide on, the second engine's text
+     *                                                               (null: not asked), how long it took and its own fields
      */
     private function secondRead(string $path, TransactionVerification $row, ExtractedFields $fields, ?array $early = null): array
     {
@@ -211,7 +214,7 @@ class TransactionVerificationService implements TransactionVerifier
         $expected = $this->expectedDestinations($row);
 
         if ($mode === SecondEngineModeEnum::OFF || ($mode === SecondEngineModeEnum::FALLBACK && $this->matcher->sure($expected, $fields, $threshold))) {
-            return [$fields, null, 0];
+            return [$fields, null, 0, null];
         }
 
         [$text, $second, $ms] = $early ?? $this->askSecond($path, $row->id);
@@ -224,7 +227,7 @@ class TransactionVerificationService implements TransactionVerifier
             $second = $this->parser->parseAs($text, $fields->format);
         }
 
-        return [$mode === SecondEngineModeEnum::FALLBACK ? $fields->filledFrom($second, $threshold) : $fields->confirmedBy($second), $text, $ms];
+        return [$mode === SecondEngineModeEnum::FALLBACK ? $fields->filledFrom($second, $threshold) : $fields->confirmedBy($second), $text, $ms, $second];
     }
 
     /**
