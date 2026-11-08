@@ -27,8 +27,11 @@ jobs:
           - platform: linux-x86_64
             runs-on: ubuntu-22.04
             python: python3
+          #
+          # macos-15 builds it because GitHub retired macos-14. The build machine does not set the oldest macOS
+          # this runs on: the prebuilt numpy and onnxruntime wheels do (14.0), and a step below enforces it.
           - platform: macos-arm64
-            runs-on: macos-14
+            runs-on: macos-15
             python: python3
     runs-on: ${{ matrix.runs-on }}
     steps:
@@ -53,6 +56,26 @@ jobs:
           "$PYTHON" -m pip install --quiet pillow==12.3.0
           tar -xzf out/*.tar.gz -C out
           "$PYTHON" ocr-sidecar/smoke_test.py "$(echo out/tv-ocr-*/tv-ocr)"
+
+      # The smoke test runs on the build machine, so it cannot see a binary that needs that machine's macOS or
+      # newer, and GitHub no longer offers an older one to try it on. Every compiled file states its minimum.
+      - name: Refuse anything that needs newer than macOS 14
+        if: runner.os == 'macOS'
+        run: |
+          floor=14
+          checked=0
+          too_new=0
+          while IFS= read -r -d '' f; do
+            file -b "$f" | grep -q Mach-O || continue
+            checked=$((checked + 1))
+            minos="$(otool -arch arm64 -l "$f" | awk '/LC_BUILD_VERSION/{found=1} found && $1=="minos"{print $2; exit}')"
+            if [ -z "$minos" ] || [ "${minos%%.*}" -gt "$floor" ]; then
+              echo "::error file=$f::needs macOS ${minos:-unknown}, the floor is $floor"
+              too_new=$((too_new + 1))
+            fi
+          done < <(find out/tv-ocr-*/ -type f -print0)
+          echo "$checked compiled files checked, $too_new over macOS $floor"
+          [ "$checked" -gt 0 ] && [ "$too_new" -eq 0 ]
 
       - uses: actions/upload-artifact@v4
         with:
