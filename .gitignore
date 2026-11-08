@@ -4,4 +4,10 @@ composer.lock
 .phpunit.result.cache
 ocr-sidecar/__pycache__/
 tests/fixtures/instapay/
+tests/fixtures/alexbank/
+# Recorded OCR output of the real receipts: local only, like the screenshots.
+tests/fixtures/ocr/
 .env
+
+# Planning docs: local only.
+.claude/

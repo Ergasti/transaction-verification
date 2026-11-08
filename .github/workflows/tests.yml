@@ -1,0 +1,23 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  phpunit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: gd, exif, sqlite3, pdo_sqlite
+          coverage: none
+
+      - run: composer install --no-interaction --prefer-dist --no-progress
+
+      # No `pint --test` yet: the code stays byte-identical to the host app's copy until it switches over (phase 4).
+      - run: vendor/bin/phpunit

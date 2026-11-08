@@ -1,0 +1,65 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+/**
+ * One row per submitted receipt. Kept forever (no soft delete, no pruning).
+ * The destination and the fields read are encrypted by the model.
+ */
+return new class extends Migration
+{
+    // The module's connection, from config (unset = the app's default).
+    public function getConnection(): ?string
+    {
+        return config('transaction-verification.connection');
+    }
+
+    public function up(): void
+    {
+        $schema = Schema::connection($this->getConnection());
+
+        // Guarded so a re-run (or a table created by hand) is a no-op.
+        if ($schema->hasTable('transaction_verifications')) {
+            return;
+        }
+
+        $schema->create('transaction_verifications', function (Blueprint $table) {
+            $table->id();
+            $table->uuid('uuid')->unique();
+            $table->string('subject_type', 64);
+            $table->string('subject_id', 64);
+            $table->unsignedBigInteger('merchant_id')->nullable()->index();
+            $table->string('status', 16);
+            // Claims so far; the claim a run holds, so a recovered row's old worker can't overwrite the new run.
+            $table->unsignedTinyInteger('attempts')->default(0);
+            $table->string('verdict', 16)->nullable();
+            $table->bigInteger('expected_amount_minor');
+            $table->char('currency', 3);
+            $table->text('expected_destination');
+            $table->string('file_mime', 100);
+            $table->unsignedInteger('file_size');
+            $table->string('engine', 32)->nullable();
+            $table->string('engine_version', 64)->nullable();
+            $table->text('extracted')->nullable();
+            // Each engine's own reading, before they are combined into extracted (null: that engine was not asked).
+            $table->text('first_read')->nullable();
+            $table->text('second_read')->nullable();
+            $table->json('checks')->nullable();
+            $table->decimal('confidence', 4, 3)->nullable();
+            $table->string('error')->nullable();
+            $table->string('idempotency_key')->unique();
+            $table->json('context')->nullable();
+            $table->timestamp('processed_at')->nullable();
+            $table->timestamps();
+
+            $table->index(['subject_type', 'subject_id']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::connection($this->getConnection())->dropIfExists('transaction_verifications');
+    }
+};
