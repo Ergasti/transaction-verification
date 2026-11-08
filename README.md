@@ -378,71 +378,13 @@ use Illuminate\Http\UploadedFile;
 $file = new UploadedFile($path, 'receipt', $mimeType, UPLOAD_ERR_OK, true);
 ```
 
-**Checking old receipts.** The package doesn't keep receipts, so it has no backfill command. Your app does it, with one queued job per receipt.
+**Checking old receipts.** The package doesn't keep receipts, so it has no backfill command. Your app knows where its old receipts are, so it does the looping. Some hints:
 
-**1. Add this job.** `Payout`, `receipt_path`, `amount_minor` and `phone` are examples, so use your own model and columns.
-
-```php
-<?php
-
-namespace App\Jobs;
-
-use App\Models\Payout;
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
-use Modules\TransactionVerification\Contracts\TransactionVerifier;
-use Modules\TransactionVerification\Data\ExpectedDestination;
-use Modules\TransactionVerification\Data\VerificationRequest;
-use Modules\TransactionVerification\Enums\DestinationTypeEnum;
-
-class CheckOldReceipt implements ShouldQueue
-{
-    use Queueable;
-
-    public function __construct(public int $payoutId) {}
-
-    public function handle(TransactionVerifier $verifier): void
-    {
-        $payout = Payout::findOrFail($this->payoutId);
-
-        $temp = tempnam(sys_get_temp_dir(), 'receipt');
-        file_put_contents($temp, Storage::get($payout->receipt_path));
-
-        try {
-            $verifier->submit(new VerificationRequest(
-                subjectType: 'payout',
-                subjectId: $payout->id,
-                expectedAmountMinor: $payout->amount_minor,
-                expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, $payout->phone),
-                file: new UploadedFile($temp, 'receipt', mime_content_type($temp), UPLOAD_ERR_OK, true),
-                idempotencyKey: "payout:{$payout->id}",
-            ));
-        } finally {
-            unlink($temp);
-        }
-    }
-}
-```
-
-**2. Queue the receipts**, from `php artisan tinker` or a command of your own:
-
-```php
-Payout::whereNotNull('receipt_path')->pluck('id')->each(fn ($id) => CheckOldReceipt::dispatch($id));
-```
-
-**3. Start a worker.** `QUEUE_CONNECTION` must be a real queue such as `database` or `redis`. Start with one worker, because each check is heavy.
-
-```bash
-php artisan queue:work
-```
-
-Only have a few receipts? Skip the worker and run them straight away with `CheckOldReceipt::dispatchSync($id)`.
-
-Receipts that already have a result are skipped as long as you keep the same `idempotencyKey`. To check one again, use a new key.
-
-`TransactionVerificationCompleted` fires for each receipt, so make sure your listeners won't notify anyone about old payouts.
+- **Call `submit()` once per receipt**, wrapping each file as shown above.
+- **The package needs a real file on the server.** If your receipts are on S3 or similar, download each one to a temporary file first and delete it afterwards.
+- **For more than a handful, use a queued job in your app**, one job per receipt. Have each job fetch its own file, set `QUEUE_CONNECTION` to a real queue such as `database` or `redis`, and start with one worker because each check is heavy.
+- **Give each receipt its own `idempotencyKey`.** Keep the same key and a receipt that already has a result is skipped, so running it twice is safe. To check one again, use a new key.
+- **`TransactionVerificationCompleted` fires for each receipt**, so make sure your listeners won't notify anyone about old payouts.
 
 ### 6. Handle Failures and Retries
 
