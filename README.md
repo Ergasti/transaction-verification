@@ -378,10 +378,67 @@ use Illuminate\Http\UploadedFile;
 $file = new UploadedFile($path, 'receipt', $mimeType, UPLOAD_ERR_OK, true);
 ```
 
-**Checking old receipts.** The package doesn't keep receipts, so it has no backfill command. Your app does the looping:
+**Checking old receipts.** The package doesn't keep receipts, so it has no backfill command. Your app does it, with one queued job per receipt.
 
-1. Go through the receipts your app kept and call `submit()` for each one, wrapping the file as shown above.
-2. For more than a handful, use a queued job in your app, one job per receipt. Have each job fetch its own file, and keep the number of workers low because each check is heavy.
+**1. Add this job.** `Payout`, `receipt_path`, `amount_minor` and `phone` are examples, so use your own model and columns.
+
+```php
+<?php
+
+namespace App\Jobs;
+
+use App\Models\Payout;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
+use Modules\TransactionVerification\Contracts\TransactionVerifier;
+use Modules\TransactionVerification\Data\ExpectedDestination;
+use Modules\TransactionVerification\Data\VerificationRequest;
+use Modules\TransactionVerification\Enums\DestinationTypeEnum;
+
+class CheckOldReceipt implements ShouldQueue
+{
+    use Queueable;
+
+    public function __construct(public int $payoutId) {}
+
+    public function handle(TransactionVerifier $verifier): void
+    {
+        $payout = Payout::findOrFail($this->payoutId);
+
+        $temp = tempnam(sys_get_temp_dir(), 'receipt');
+        file_put_contents($temp, Storage::get($payout->receipt_path));
+
+        try {
+            $verifier->submit(new VerificationRequest(
+                subjectType: 'affiliate_payout',
+                subjectId: $payout->id,
+                expectedAmountMinor: $payout->amount_minor,
+                expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, $payout->phone),
+                file: new UploadedFile($temp, 'receipt', mime_content_type($temp), UPLOAD_ERR_OK, true),
+                idempotencyKey: "affiliate_payout:{$payout->id}",
+            ));
+        } finally {
+            unlink($temp);
+        }
+    }
+}
+```
+
+**2. Queue the receipts**, from `php artisan tinker` or a command of your own:
+
+```php
+Payout::whereNotNull('receipt_path')->pluck('id')->each(fn ($id) => CheckOldReceipt::dispatch($id));
+```
+
+**3. Start a worker.** `QUEUE_CONNECTION` must be a real queue such as `database` or `redis`. Start with one worker, because each check is heavy.
+
+```bash
+php artisan queue:work
+```
+
+Only have a few receipts? Skip the worker and run them straight away with `CheckOldReceipt::dispatchSync($id)`.
 
 Receipts that already have a result are skipped as long as you keep the same `idempotencyKey`. To check one again, use a new key.
 
