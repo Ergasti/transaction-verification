@@ -13,12 +13,12 @@ Give this package a receipt screenshot or PDF, the amount, and where the money s
 
 ```php
 $result = $verifier->submit(new VerificationRequest(
-    subjectType: 'affiliate_payout',
+    subjectType: 'payout',
     subjectId: $payoutId,
     expectedAmountMinor: 307000, // 3,070.00 EGP in piastres
     expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, '01000000001'),
     file: $request->file('receipt'),
-    idempotencyKey: "affiliate_payout:{$payoutId}",
+    idempotencyKey: "payout:{$payoutId}",
 ));
 
 $result->verdict; // VerdictEnum::MATCH
@@ -278,12 +278,12 @@ class PayoutReceiptController
         app()->terminating(function () use ($verifier, $receipt, $payoutId) {
             try {
                 $verifier->submit(new VerificationRequest(
-                    subjectType: 'affiliate_payout',
+                    subjectType: 'payout',
                     subjectId: $payoutId,
                     expectedAmountMinor: 307000,
                     expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, '01000000001'),
                     file: $receipt,
-                    idempotencyKey: "affiliate_payout:{$payoutId}",
+                    idempotencyKey: "payout:{$payoutId}",
                 ));
             } catch (\Throwable $e) {
                 report($e); // Invalid input, or the row could not be created. A bad receipt never lands here.
@@ -327,7 +327,7 @@ use Modules\TransactionVerification\Enums\VerificationStatusEnum;
 
 $verifier = app(TransactionVerifier::class);
 
-$result = $verifier->latestFor('affiliate_payout', 99);   // newest check for this subject, or null
+$result = $verifier->latestFor('payout', 99);   // newest check for this subject, or null
 $result = $verifier->find($uuid);                         // one check by uuid, or null
 
 if ($result?->status === VerificationStatusEnum::COMPLETED && $result->verdict === VerdictEnum::MATCH) {
@@ -356,12 +356,12 @@ If the money may rightly go to more than one place, pass the others as `alternat
 
 ```php
 new VerificationRequest(
-    subjectType: 'affiliate_payout',
+    subjectType: 'payout',
     subjectId: $payoutId,
     expectedAmountMinor: 307000,
     expectedDestination: new ExpectedDestination(DestinationTypeEnum::BANK, '1000 0000 0000-0000 010'),
     file: $receipt,
-    idempotencyKey: "affiliate_payout:{$payoutId}",
+    idempotencyKey: "payout:{$payoutId}",
     alternativeDestinations: [new ExpectedDestination(DestinationTypeEnum::PHONE, '01000000001')],
 );
 ```
@@ -412,12 +412,12 @@ class CheckOldReceipt implements ShouldQueue
 
         try {
             $verifier->submit(new VerificationRequest(
-                subjectType: 'affiliate_payout',
+                subjectType: 'payout',
                 subjectId: $payout->id,
                 expectedAmountMinor: $payout->amount_minor,
                 expectedDestination: new ExpectedDestination(DestinationTypeEnum::PHONE, $payout->phone),
                 file: new UploadedFile($temp, 'receipt', mime_content_type($temp), UPLOAD_ERR_OK, true),
-                idempotencyKey: "affiliate_payout:{$payout->id}",
+                idempotencyKey: "payout:{$payout->id}",
             ));
         } finally {
             unlink($temp);
@@ -580,7 +580,7 @@ A successful response looks like this. A list returns `{"items": [...], "meta": 
   "success": true,
   "data": {
     "uuid": "…",
-    "subject_type": "affiliate_payout",
+    "subject_type": "payout",
     "subject_id": "123",
     "status": "completed",
     "verdict": "match",
@@ -639,16 +639,16 @@ $response = Http::withHeaders([
 <details>
 <summary><strong>Check your signer against this example</strong></summary>
 
-A test pins this example. The secret is a test value, never a real one.
+The secret is a test value, never a real one.
 
 ```text
 secret    : test_secret_do_not_use
 method    : GET
-path+query: /api/internal/transaction-verification/v1/verifications?subject_id=123&subject_type=affiliate_payout
+path+query: /api/internal/transaction-verification/v1/verifications?subject_id=123&subject_type=payout
 body sha  : e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 timestamp : 1700000000
 nonce     : 0123456789abcdef0123456789abcdef
-signature : 8fa7229404a13c5a0705875ab386b3f113cc7a4c85c077227409713300cca20e
+signature : a2860da04df71a64b5801c7b266c0e1abd54d42af536ccd2776180d21a9fb93f
 ```
 
 </details>
@@ -672,12 +672,12 @@ body=$(mktemp); trap 'rm -f "$body"' EXIT
 
 # The JSON goes to a file because a large receipt is too long for a command-line argument.
 jq -n --rawfile file <(base64 < "$RECEIPT" | tr -d '\n') '{
-  subject_type: "affiliate_payout",
+  subject_type: "payout",
   subject_id: "7",
   expected_amount_minor: 307000,
   currency: "EGP",
   expected_destination: {type: "phone", value: "01000000000"},
-  idempotency_key: "affiliate_payout:7",
+  idempotency_key: "payout:7",
   context: {uploaded_by: "finance"},
   file_base64: $file
 }' > "$body"
@@ -708,12 +708,12 @@ The receipt goes **inside the JSON, base64-encoded**, so the signature covers th
 
 ```json
 {
-  "subject_type": "affiliate_payout",
+  "subject_type": "payout",
   "subject_id": "123",
   "expected_amount_minor": 307000,
   "currency": "EGP",
   "expected_destination": {"type": "phone", "value": "01000000000"},
-  "idempotency_key": "affiliate_payout:123",
+  "idempotency_key": "payout:123",
   "context": {"uploaded_by": "finance"},
   "file_base64": "iVBORw0KGgo…"
 }
@@ -772,7 +772,7 @@ Before anyone relies on a verdict, let about two weeks of receipts through and t
 
 ```bash
 php artisan transaction-verification:shadow-report --since=2026-10-01 > shadow.csv
-php artisan transaction-verification:shadow-report --subject-type=affiliate_payout > shadow.csv
+php artisan transaction-verification:shadow-report --subject-type=payout > shadow.csv
 ```
 
 `--since` takes `YYYY-MM-DD` and defaults to 14 days ago. Without `--subject-type`, every caller's checks are listed.
@@ -796,7 +796,7 @@ One table, `transaction_verifications`, on the connection you chose. Rows are ke
 |---|---|---|
 | `id` | bigint | Primary key |
 | `uuid` | uuid | Unique |
-| `subject_type` | string(64) | A plain label such as `affiliate_payout`, indexed with `subject_id` |
+| `subject_type` | string(64) | A plain label such as `payout`, indexed with `subject_id` |
 | `subject_id` | string(64) | Not a polymorphic relation |
 | `merchant_id` | bigint, nullable | Indexed |
 | `status` | string(16) | |
@@ -842,7 +842,7 @@ After **any** upgrade, run `php artisan transaction-verification:install-ocr --f
 | To | Change | What to do |
 |---|---|---|
 | **0.8.0** | One migration instead of two, with new `first_read` and `second_read` columns | A database that already ran this package's migrations must drop `transaction_verifications`, delete this migration's row from `migrations`, and migrate again. **This deletes existing results** |
-| **0.8.0** | `shadow-report` lists every subject type | Pass `--subject-type=affiliate_payout` for the old output |
+| **0.8.0** | `shadow-report` lists every subject type | Pass `--subject-type=<type>` to list just one type |
 | **0.7.2** | `ExtractedFields::masked()` is now `revealed()`, and values are unmasked | Rename the call, and mask at your own boundary if you need to |
 | **0.7.0** | Duplicate detection and the `duplicate` verdict are removed | Remove that arm from any `match` on `VerdictEnum`, and delete `TRANSACTION_VERIFICATION_HMAC_KEY` |
 | **0.6.0** | The Docker image was replaced by a binary | Install the system packages, then run `install-ocr` |
