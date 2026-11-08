@@ -458,6 +458,7 @@ Adding a layout means changing the package, because each parser needs a `Receipt
 **On any other platform** (an Intel Mac, another Linux architecture), run the engine yourself and point the package at it. It needs Python 3.11 or newer:
 
 ```bash
+cd vendor/ergasti/transaction-verification
 pip install -r ocr-sidecar/requirements.txt
 python ocr-sidecar/server.py     # listens on 127.0.0.1:8080
 ```
