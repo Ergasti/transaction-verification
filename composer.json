@@ -1,6 +1,6 @@
 {
     "name": "ergasti/transaction-verification",
-    "description": "Reads payout receipt screenshots (OCR) and checks amount, recipient and reuse. Warns, never blocks.",
+    "description": "Reads payout receipt screenshots (OCR) and checks amount and recipient. Warns, never blocks.",
     "type": "library",
     "license": "proprietary",
     "require": {

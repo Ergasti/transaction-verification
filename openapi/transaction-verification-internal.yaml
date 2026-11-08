@@ -427,7 +427,7 @@ paths:
   '/verifications/{uuid}':
     get:
       operationId: transaction-verification.internal.v1.verifications.show
-      summary: 'One verification: status, verdict, checks and what was read (masked)'
+      summary: 'One verification: status, verdict, checks and what was read'
       tags:
         - Verification
       parameters:

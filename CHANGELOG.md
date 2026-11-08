@@ -7,7 +7,9 @@
 - The create migration builds the table in its final shape, and the migration that dropped `file_disk`,
   `file_path`, `ocr_text` and `second_ocr_text` is gone. **Upgrading:** only for a database that has never run this
   package's migrations. One that has keeps a stale `2026_10_07_100000_drop_stored_receipt_columns...` row in
-  `migrations` (harmless) and lacks the new columns below: drop `transaction_verifications` and migrate again.
+  `migrations` (harmless) and lacks the new columns below: drop `transaction_verifications`, delete the
+  `2026_09_29_100000_create_transaction_verifications_table` row from `migrations` (or `migrate` skips it and
+  creates nothing), and migrate again. This deletes existing results.
 - New `first_read` and `second_read` columns keep what each engine read (the fields, never the raw text), before
   they are combined into `extracted`. `second_read` is null when the second engine was not asked. Encrypted at rest
   and `$hidden`, like `extracted`.

@@ -33,7 +33,7 @@ class InstallOcrCommand extends Command
 
     protected $signature = 'transaction-verification:install-ocr
         {--force : Replace an archive that is already installed}
-        {--release= : The engine release to install, e.g. v0.5.1. Defaults to this package\'s own version}';
+        {--release= : The engine release to install, e.g. v0.8.0. Defaults to this package\'s own version}';
 
     protected $description = 'Install the RapidOCR second engine (no Docker, no Python) and report the host binaries.';
 
@@ -96,7 +96,7 @@ class InstallOcrCommand extends Command
         // Not --version: Symfony owns that globally and would just print the application version.
         if (is_string($given = $this->option('release')) && $given !== '') {
             if (! preg_match(self::TAG, $given)) {
-                $this->error('--release must look like a release tag, e.g. v0.5.1.');
+                $this->error('--release must look like a release tag, e.g. v0.8.0.');
 
                 return null;
             }
