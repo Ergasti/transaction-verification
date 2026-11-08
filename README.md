@@ -378,6 +378,15 @@ use Illuminate\Http\UploadedFile;
 $file = new UploadedFile($path, 'receipt', $mimeType, UPLOAD_ERR_OK, true);
 ```
 
+**Checking old receipts.** The package doesn't keep receipts, so it has no backfill command. Your app does the looping:
+
+1. Go through the receipts your app kept and call `submit()` for each one, wrapping the file as shown above.
+2. For more than a handful, use a queued job in your app, one job per receipt. Have each job fetch its own file, and keep the number of workers low because each check is heavy.
+
+Receipts that already have a result are skipped as long as you keep the same `idempotencyKey`. To check one again, use a new key.
+
+`TransactionVerificationCompleted` fires for each receipt, so make sure your listeners won't notify anyone about old payouts.
+
 ### 6. Handle Failures and Retries
 
 | What happened | Result |
